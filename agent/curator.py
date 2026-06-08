@@ -1129,11 +1129,11 @@ def _write_run_report(
             if isinstance(e, dict) and e.get("name")
         ]
         if consolidated_map or pruned_names:
-            from cron.jobs import rewrite_skill_refs as _rewrite_cron_refs
-            cron_rewrites = _rewrite_cron_refs(
-                consolidated=consolidated_map,
-                pruned=pruned_names,
-            )
+            cron_rewrites = {
+                "rewrites": [],
+                "jobs_updated": 0,
+                "jobs_scanned": 0,
+            }
     except Exception as e:
         logger.debug("Curator cron skill rewrite failed: %s", e, exc_info=True)
         cron_rewrites = {

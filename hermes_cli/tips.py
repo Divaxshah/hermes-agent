@@ -67,7 +67,7 @@ TIPS = [
     "hermes -w creates an isolated git worktree — perfect for parallel agent workflows.",
     "hermes -w -q \"Fix issue #42\" combines worktree isolation with a one-shot query.",
     "hermes chat -t web,terminal enables only specific toolsets for a focused session.",
-    "hermes chat -s github-pr-workflow preloads a skill at launch.",
+    "hermes chat -s plan preloads a skill at launch.",
     "hermes chat -q \"query\" runs a single non-interactive query and exits.",
     "hermes chat --max-turns 200 overrides the default 90-iteration limit per turn.",
     "hermes chat --checkpoints enables filesystem snapshots before every destructive file change.",
@@ -97,7 +97,7 @@ TIPS = [
     "hermes profile create coder creates an isolated profile that becomes its own command.",
     "hermes profile create work --clone copies your current config and keys to a new profile.",
     "hermes update syncs new bundled skills to ALL profiles automatically.",
-    "hermes gateway install sets up Hermes as a system service (systemd/launchd).",
+    "Use `hermes chat` to start an interactive CLI agent session.",
     "hermes memory setup lets you configure an external memory provider (Honcho, Mem0, etc.).",
     "hermes webhook subscribe creates event-driven webhook routes with HMAC validation.",
     "Save money: hermes tools disables unused tools, hermes skills config trims skills down.",
@@ -138,9 +138,8 @@ TIPS = [
     "read_file auto-deduplicates — re-reading an unchanged file returns a lightweight stub.",
     "browser_vision takes a screenshot and analyzes it with AI — works for CAPTCHAs and visual content.",
     "browser_console can evaluate JavaScript expressions in the page context.",
-    "image_generate creates images with FLUX 2 Pro and automatic 2x upscaling.",
-    "text_to_speech converts text to audio — plays as voice bubbles on Telegram.",
-    "send_message can reach any connected messaging platform from within a session.",
+    "text_to_speech converts text to audio in the CLI.",
+    "Use `hermes chat` for interactive CLI sessions.",
     "The todo tool helps the agent track complex multi-step tasks during a session.",
     "session_search performs full-text search across ALL past conversations.",
     "The agent automatically saves preferences, corrections, and environment facts to memory.",
@@ -153,7 +152,7 @@ TIPS = [
     "Each profile gets its own config, API keys, memory, sessions, skills, and cron jobs.",
     "Profile names become shell commands — 'hermes profile create coder' creates the 'coder' command.",
     "hermes profile export coder -o backup.tar.gz creates a portable profile archive.",
-    "If two profiles accidentally share a bot token, the second gateway is blocked with a clear error.",
+    "Each profile keeps its own sessions, memory, and tool configuration isolated.",
 
     # --- Sessions ---
     "Sessions auto-generate descriptive titles after the first exchange — no manual naming needed.",
@@ -169,9 +168,9 @@ TIPS = [
     "Corrections you give the agent (\"no, do it this way\") are often auto-saved to memory.",
 
     # --- Skills ---
-    "Over 80 bundled skills covering github, creative, mlops, productivity, research, and more.",
+    "Bundled skills cover software development workflows like plan, TDD, and debugging.",
     "Every installed skill automatically becomes a slash command — type / to see them all.",
-    "hermes skills install official/security/1password installs optional skills from the repo.",
+    "hermes skills install official/software-development/subagent-driven-development installs optional skills from the repo.",
     "Skills can restrict to specific OS platforms — some only load on macOS or Linux.",
     "skills.external_dirs in config.yaml lets you load skills from custom directories.",
     "The agent can create its own skills as procedural memory using skill_manage.",
@@ -179,7 +178,7 @@ TIPS = [
 
     # --- Cron & Scheduling ---
     "Cron jobs can attach skills: hermes cron add --skill blogwatcher \"Check for new posts\".",
-    "Cron delivery targets include telegram, discord, slack, email, sms, and 12+ more platforms.",
+    "Cron jobs can run on a schedule with self-contained prompts in fresh agent sessions.",
     "If a cron response starts with [SILENT], delivery is suppressed — useful for monitoring-only jobs.",
     "Cron supports relative delays (30m), intervals (every 2h), cron expressions, and ISO timestamps.",
     "Cron jobs run in completely fresh agent sessions — prompts must be self-contained.",
@@ -189,19 +188,8 @@ TIPS = [
     "Five TTS providers available: Edge TTS (free), ElevenLabs, OpenAI, NeuTTS (free local), MiniMax.",
     "/voice on enables voice mode in the CLI. Ctrl+B toggles push-to-talk recording.",
     "Streaming TTS plays sentences as they generate — you don't wait for the full response.",
-    "Voice messages on Telegram, Discord, WhatsApp, and Slack are auto-transcribed.",
-
-    # --- Gateway & Messaging ---
-    "Hermes runs on 21 messaging platforms: Telegram, Discord, Slack, WhatsApp, Signal, Matrix, IRC, Microsoft Teams, email, and more.",
-    "hermes gateway install sets it up as a system service that starts on boot.",
-    "DingTalk uses Stream Mode — no webhooks or public URL needed.",
-    "BlueBubbles brings iMessage to Hermes via a local macOS server.",
-    "Webhook routes support HMAC validation, rate limiting, and event filtering.",
-    "The API server exposes an OpenAI-compatible endpoint compatible with Open WebUI and LibreChat.",
-    "Discord voice channel mode: the bot joins VC, transcribes speech, and talks back.",
-    "group_sessions_per_user: true gives each person their own session in group chats.",
-    "/sethome marks a chat as the home channel for cron job deliveries.",
-    "The gateway supports inactivity-based timeouts — active agents can run indefinitely.",
+    # --- CLI ---
+    "This build is CLI-focused — use `hermes chat` for interactive agent sessions.",
 
     # --- Security ---
     "Dangerous command approval has 4 tiers: once, session, always (permanent allowlist), deny.",
@@ -345,12 +333,11 @@ TIPS = [
     '/copy [N] copies the last assistant response to your clipboard, or the Nth-from-last with a number.',
     '/redraw forces a full UI repaint, fixing terminal drift after tmux resize or mouse selection artifacts.',
     '/agents (alias /tasks) shows active agents and running background tasks across the current session.',
-    '/footer toggles the gateway footer on final replies showing model, context %, and cwd.',
+    '/footer toggles the status footer on final replies showing model, context %, and cwd.',
     '/busy queue|steer|interrupt controls what pressing Enter does while Hermes is working.',
-    '/topic in Telegram DMs enables user-managed multi-session topic mode — /topic <id> restores past sessions inline.',
+    '/topic switches between session topics in multi-session mode — /topic <id> restores past sessions inline.',
     '/approve session|always runs a pending dangerous command with your chosen trust scope; /deny rejects it.',
-    '/restart gracefully restarts the gateway after draining active runs, then pings the requester when back up.',
-    '/kanban boards switch <slug> changes the active multi-project Kanban board from inside chat.',
+    '/restart gracefully restarts the CLI session after draining active runs.',
     '/reload reloads ~/.hermes/.env into the running session — pick up new API keys without restarting.',
 
     # --- Cron (no-agent & scripts) ---

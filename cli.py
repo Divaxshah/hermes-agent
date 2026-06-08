@@ -847,11 +847,8 @@ def _sync_process_session_id(session_id: str) -> None:
 
     set_current_session_id(session_id)
 
-# Cron job system for scheduled tasks (execution is handled by the gateway)
 def get_job(*args, **kwargs):
-    from cron import get_job as _get_job
-
-    return _get_job(*args, **kwargs)
+    return None
 
 # Resource cleanup imports for safe shutdown (terminal VMs, browser sessions)
 from hermes_cli.callbacks import prompt_for_secret
@@ -6824,153 +6821,8 @@ class HermesCLI:
                 print("(^_^)v New session started!")
 
     def _handle_handoff_command(self, cmd_original: str) -> bool:
-        """Handle ``/handoff <platform>`` — transfer this CLI session to a gateway platform.
-
-        Flow:
-          1. Validate platform name + the gateway has a home channel for it.
-          2. Reject if the agent is currently running (the in-flight turn
-             would race with the gateway's switch_session).
-          3. Write ``handoff_state='pending'`` on this session row.
-          4. Block-poll ``state.db`` for terminal state (timeout 60s).
-          5. On ``completed`` → print resume hint and signal CLI exit by
-             returning False (the caller honors that like ``/quit``).
-          6. On ``failed`` / timeout → print error and return True so the
-             user keeps their CLI session.
-
-        Returns:
-            False to signal CLI exit, True to keep going.
-        """
-        from hermes_state import format_session_db_unavailable
-
-        parts = cmd_original.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            _cprint("  Usage: /handoff <platform>")
-            _cprint("  Hands the current session off to that platform's home channel.")
-            _cprint("  The CLI session ends here; resume it later with /resume.")
-            return True
-
-        platform_name = parts[1].strip().lower()
-
-        # Validate platform name + home channel via the live gateway config.
-        try:
-            from gateway.config import load_gateway_config, Platform
-        except Exception as exc:  # pragma: no cover — gateway pkg always shipped
-            _cprint(f"  Could not load gateway config: {exc}")
-            return True
-
-        try:
-            platform = Platform(platform_name)
-        except (ValueError, KeyError):
-            _cprint(f"  Unknown platform '{platform_name}'.")
-            return True
-
-        try:
-            gw_config = load_gateway_config()
-        except Exception as exc:
-            _cprint(f"  Could not load gateway config: {exc}")
-            return True
-
-        pcfg = gw_config.platforms.get(platform)
-        if not pcfg or not pcfg.enabled:
-            _cprint(f"  Platform '{platform_name}' is not configured/enabled in the gateway.")
-            return True
-
-        home = gw_config.get_home_channel(platform)
-        if not home or not home.chat_id:
-            _cprint(f"  No home channel configured for {platform_name}.")
-            _cprint(f"  Set one with /sethome on the destination chat first.")
-            return True
-
-        # Refuse mid-turn: an in-flight agent run would race with the
-        # gateway's switch_session and the synthetic turn dispatch.
-        if getattr(self, "_agent_running", False):
-            _cprint("  Agent is busy. Wait for the current turn to finish, then retry /handoff.")
-            return True
-
-        # Make sure we have a SessionDB handle.
-        if not self._session_db:
-            try:
-                from hermes_state import SessionDB
-                self._session_db = SessionDB()
-            except Exception:
-                pass
-        if not self._session_db:
-            _cprint(f"  {format_session_db_unavailable()}")
-            return True
-
-        # Make sure the session row exists in state.db. Most CLI sessions
-        # are written via _flush_messages_to_session_db on the first turn
-        # already, but if the user tries to hand off an empty session we
-        # still want a row to mark.
-        try:
-            row = self._session_db.get_session(self.session_id)
-            if not row:
-                # Nothing has flushed yet. Create a stub so the gateway has
-                # something to switch_session onto. Inserting via title-set
-                # is the simplest path because set_session_title's INSERT OR
-                # IGNORE creates the row.
-                placeholder_title = f"handoff-{self.session_id[:8]}"
-                self._session_db.set_session_title(self.session_id, placeholder_title)
-        except Exception as exc:
-            _cprint(f"  Could not ensure session row in state.db: {exc}")
-            return True
-
-        # Display title for messaging.
-        session_title = ""
-        try:
-            row = self._session_db.get_session(self.session_id)
-            if row:
-                session_title = row.get("title") or ""
-        except Exception:
-            pass
-        if not session_title:
-            session_title = self.session_id[:8]
-
-        # Mark pending — gateway watcher will pick this up.
-        ok = self._session_db.request_handoff(self.session_id, platform_name)
-        if not ok:
-            _cprint("  Session is already in flight for handoff. Wait for it to settle, then retry.")
-            return True
-
-        _cprint(f"  Queued handoff of '{session_title}' → {platform_name} (home: {home.name}).")
-        _cprint(f"  Waiting for the gateway to pick it up...")
-
-        # Poll-block on terminal state. Tick every 0.5s; bail at ~60s.
-        import time as _time
-        deadline = _time.time() + 60.0
-        last_state = "pending"
-        while _time.time() < deadline:
-            try:
-                state_row = self._session_db.get_handoff_state(self.session_id)
-            except Exception:
-                state_row = None
-            current = (state_row or {}).get("state") or "pending"
-            if current != last_state:
-                if current == "running":
-                    _cprint("  Gateway picked it up; transferring...")
-                last_state = current
-            if current == "completed":
-                _cprint("")
-                _cprint(f"  ↻ Handoff complete. The session is now active on {platform_name}.")
-                _cprint(f"  Resume it on this CLI later with: /resume {session_title}")
-                _cprint("")
-                # End the CLI cleanly — same exit semantics as /quit.
-                self._should_exit = True
-                return False
-            if current == "failed":
-                err = (state_row or {}).get("error") or "unknown error"
-                _cprint(f"  Handoff failed: {err}")
-                _cprint("  Your CLI session is intact. Try /handoff again, or /resume on the platform manually.")
-                return True
-            _time.sleep(0.5)
-
-        # Timed out. Clear the pending flag so the user can retry.
-        try:
-            self._session_db.fail_handoff(self.session_id, "timed out waiting for gateway")
-        except Exception:
-            pass
-        _cprint("  Timed out waiting for the gateway. Is `hermes gateway` running?")
-        _cprint("  Your CLI session is intact.")
+        """Handoff to external messaging platforms was removed."""
+        _cprint("  /handoff is unavailable — messaging gateway was removed from this build.")
         return True
 
     def _handle_resume_command(self, cmd_original: str) -> None:
@@ -8438,7 +8290,10 @@ class HermesCLI:
             print()
     
     def _handle_cron_command(self, cmd: str):
-        """Handle the /cron command to manage scheduled tasks."""
+        """Cron scheduling was removed from this minimal build."""
+        print("Cron scheduling is not available. Use `hermes chat` for interactive sessions.")
+        return
+
         import shlex
         from tools.cronjob_tools import cronjob as cronjob_tool
 
@@ -8705,25 +8560,8 @@ class HermesCLI:
             print(f"(._.) curator: {exc}")
 
     def _handle_kanban_command(self, cmd: str):
-        """Handle the /kanban command — delegate to the shared kanban CLI.
-
-        The string form passed here is the user's full ``/kanban ...``
-        including the leading slash; we strip it and hand the remainder
-        to ``kanban.run_slash`` which returns a single formatted string.
-        """
-        from hermes_cli.kanban import run_slash
-
-        rest = cmd.strip()
-        if rest.startswith("/"):
-            rest = rest.lstrip("/")
-        if rest.startswith("kanban"):
-            rest = rest[len("kanban"):].lstrip()
-        try:
-            output = run_slash(rest)
-        except Exception as exc:  # pragma: no cover - defensive
-            output = f"(._.) kanban error: {exc}"
-        if output:
-            print(output)
+        """Kanban was removed from this build."""
+        print("Kanban is not available in this build.")
 
     def _handle_skills_command(self, cmd: str):
         """Handle /skills slash command — delegates to hermes_cli.skills_hub."""
@@ -8731,61 +8569,11 @@ class HermesCLI:
         handle_skills_slash(cmd, ChatConsole())
 
     def _show_gateway_status(self):
-        """Show status of the gateway and connected messaging platforms."""
-        from gateway.config import load_gateway_config, Platform
-        
+        """Messaging gateway was removed from this build."""
         print()
-        print("+" + "-" * 60 + "+")
-        print("|" + " " * 15 + "(✿◠‿◠) Gateway Status" + " " * 17 + "|")
-        print("+" + "-" * 60 + "+")
+        print("  Messaging gateway is not available in this CLI-only build.")
+        print("  Use `hermes chat` for interactive sessions.")
         print()
-        
-        try:
-            config = load_gateway_config()
-            
-            print("  Messaging Platform Configuration:")
-            print("  " + "-" * 55)
-            
-            platform_status = {
-                Platform.TELEGRAM: ("Telegram", "TELEGRAM_BOT_TOKEN"),
-                Platform.DISCORD: ("Discord", "DISCORD_BOT_TOKEN"),
-                Platform.SLACK: ("Slack", "SLACK_BOT_TOKEN"),
-                Platform.WHATSAPP: ("WhatsApp", "WHATSAPP_ENABLED"),
-            }
-            
-            for platform, (name, env_var) in platform_status.items():
-                pconfig = config.platforms.get(platform)
-                if pconfig and pconfig.enabled:
-                    home = config.get_home_channel(platform)
-                    home_str = f" → {home.name}" if home else ""
-                    print(f"    ✓ {name:<12} Enabled{home_str}")
-                else:
-                    print(f"    ○ {name:<12} Not configured ({env_var})")
-            
-            print()
-            print("  Session Reset Policy:")
-            print("  " + "-" * 55)
-            policy = config.default_reset_policy
-            print(f"    Mode: {policy.mode}")
-            print(f"    Daily reset at: {policy.at_hour}:00")
-            print(f"    Idle timeout: {policy.idle_minutes} minutes")
-            
-            print()
-            print("  To start the gateway:")
-            print("    python cli.py --gateway")
-            print()
-            print(f"  Configuration file: {display_hermes_home()}/config.yaml")
-            print()
-            
-        except Exception as e:
-            print(f"  Error loading gateway config: {e}")
-            print()
-            print("  To configure the gateway:")
-            print("    1. Set environment variables:")
-            print("       TELEGRAM_BOT_TOKEN=your_token")
-            print("       DISCORD_BOT_TOKEN=your_token")
-            print(f"    2. Or configure settings in {display_hermes_home()}/config.yaml")
-            print()
     
     def process_command(self, command: str) -> bool:
         """
@@ -15770,12 +15558,8 @@ def main(
     # This enables interactive sudo password prompts with timeout
     os.environ["HERMES_INTERACTIVE"] = "1"
     
-    # Handle gateway mode (messaging + cron)
     if gateway:
-        import asyncio
-        from gateway.run import start_gateway
-        print("Starting Hermes Gateway (messaging platforms)...")
-        asyncio.run(start_gateway())
+        print("Messaging gateway was removed. Use `hermes chat` for CLI-only interaction.")
         return
 
     # Skip worktree for list commands (they exit immediately)

@@ -5,39 +5,14 @@ Hermes CLI - Main entry point.
 Usage:
     hermes                     # Interactive chat (default)
     hermes chat                # Interactive chat
-    hermes gateway             # Run gateway in foreground
-    hermes gateway start       # Start gateway as service
-    hermes gateway stop        # Stop gateway service
-    hermes gateway status      # Show gateway status
-    hermes gateway install     # Install gateway service
-    hermes gateway uninstall   # Uninstall gateway service
+    hermes gateway             # (removed — CLI-only build)
     hermes setup               # Interactive setup wizard
     hermes logout              # Clear stored authentication
     hermes status              # Show status of all components
-    hermes cron                # Manage cron jobs
-    hermes cron list           # List cron jobs
-    hermes cron status         # Check if cron scheduler is running
     hermes doctor              # Check configuration and dependencies
-    hermes honcho setup                    # Configure Honcho AI memory integration
-    hermes honcho status                   # Show Honcho config and connection status
-    hermes honcho sessions                 # List directory → session name mappings
-    hermes honcho map <name>               # Map current directory to a session name
-    hermes honcho peer                     # Show peer names and dialectic settings
-    hermes honcho peer --user NAME         # Set user peer name
-    hermes honcho peer --ai NAME           # Set AI peer name
-    hermes honcho peer --reasoning LEVEL   # Set dialectic reasoning level
-    hermes honcho mode                     # Show current memory mode
-    hermes honcho mode [hybrid|honcho|local]  # Set memory mode
-    hermes honcho tokens                   # Show token budget settings
-    hermes honcho tokens --context N       # Set session.context() token cap
-    hermes honcho tokens --dialectic N     # Set dialectic result char cap
-    hermes honcho identity                 # Show AI peer identity representation
-    hermes honcho identity <file>          # Seed AI peer identity from a file (SOUL.md etc.)
-    hermes honcho migrate                  # Step-by-step migration guide: OpenClaw native → Hermes + Honcho
     hermes version             Show version
     hermes update              Update to latest version
     hermes uninstall           Uninstall Hermes Agent
-    hermes acp                 Run as an ACP server for editor integration
     hermes sessions browse     Interactive session picker with search
 
     hermes claw migrate --dry-run  # Preview migration without changes
@@ -1752,186 +1727,9 @@ def _resolve_tui_heap_mb(default_mb: int = 8192) -> int:
     return max(1536, sized) if limit_mb > 2048 else sized
 
 
-def _launch_tui(
-    resume_session_id: Optional[str] = None,
-    tui_dev: bool = False,
-    model: Optional[str] = None,
-    provider: Optional[str] = None,
-    toolsets: object = None,
-    skills: object = None,
-    verbose: Optional[bool] = None,
-    quiet: bool = False,
-    query: Optional[str] = None,
-    image: Optional[str] = None,
-    worktree: bool = False,
-    checkpoints: bool = False,
-    pass_session_id: bool = False,
-    max_turns: Optional[int] = None,
-    accept_hooks: bool = False,
-):
-    """Replace current process with the TUI."""
-    tui_dir = PROJECT_ROOT / "ui-tui"
-
-    import tempfile
-
-    env = os.environ.copy()
-    active_session_fd, active_session_file = tempfile.mkstemp(
-        prefix="hermes-tui-active-session-", suffix=".json"
-    )
-    os.close(active_session_fd)
-    env["HERMES_TUI_ACTIVE_SESSION_FILE"] = active_session_file
-    env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
-        "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
-    )
-    env.setdefault("HERMES_PYTHON", sys.executable)
-    env.setdefault("HERMES_CWD", os.getcwd())
-    env.setdefault("NODE_ENV", "development" if tui_dev else "production")
-
-    wt_info = None
-    if worktree:
-        try:
-            from cli import (
-                _cleanup_worktree,
-                _git_repo_root,
-                _prune_stale_worktrees,
-                _setup_worktree,
-            )
-
-            repo = _git_repo_root()
-            if repo:
-                _prune_stale_worktrees(repo)
-            wt_info = _setup_worktree()
-        except Exception as exc:
-            print(f"✗ Failed to create TUI worktree: {exc}", file=sys.stderr)
-            wt_info = None
-        if not wt_info:
-            sys.exit(1)
-        env["HERMES_CWD"] = wt_info["path"]
-        env["TERMINAL_CWD"] = wt_info["path"]
-
-    if model:
-        env["HERMES_MODEL"] = model
-        env["HERMES_INFERENCE_MODEL"] = model
-    if provider:
-        env["HERMES_TUI_PROVIDER"] = provider
-        env["HERMES_INFERENCE_PROVIDER"] = provider
-    tui_toolsets = _normalize_tui_toolsets(toolsets)
-    if tui_toolsets:
-        env["HERMES_TUI_TOOLSETS"] = ",".join(tui_toolsets)
-    if skills:
-        if isinstance(skills, (list, tuple)):
-            flattened = []
-            for item in skills:
-                flattened.extend(
-                    part.strip() for part in str(item).split(",") if part.strip()
-                )
-            if flattened:
-                env["HERMES_TUI_SKILLS"] = ",".join(flattened)
-        else:
-            value = str(skills).strip()
-            if value:
-                env["HERMES_TUI_SKILLS"] = value
-    if query:
-        env["HERMES_TUI_QUERY"] = query
-    if image:
-        env["HERMES_TUI_IMAGE"] = image
-    if checkpoints:
-        env["HERMES_TUI_CHECKPOINTS"] = "1"
-    if pass_session_id:
-        env["HERMES_TUI_PASS_SESSION_ID"] = "1"
-    if max_turns is not None:
-        env["HERMES_TUI_MAX_TURNS"] = str(max_turns)
-    if verbose:
-        env["HERMES_TUI_TOOL_PROGRESS"] = "verbose"
-    elif quiet:
-        env["HERMES_TUI_TOOL_PROGRESS"] = "off"
-    if accept_hooks:
-        env["HERMES_ACCEPT_HOOKS"] = "1"
-    # Guarantee a generous V8 heap for the TUI. Default node cap is ~1.5–4GB
-    # depending on version and can fatal-OOM on long sessions with large
-    # transcripts / reasoning blobs. We target 8GB on an unconstrained host,
-    # but V8 is NOT cgroup-aware: in a memory-limited Docker/k8s container a
-    # flat 8GB heap grows past the container limit and the cgroup OOM-killer
-    # SIGKILLs Node — running no JS handler, writing no breadcrumb, leaving the
-    # user with only a bare gateway `stdin EOF`. _resolve_tui_heap_mb() reads
-    # the real cgroup limit and sizes the cap below it so V8 GCs/exits
-    # gracefully (and the memory monitor's onCritical breadcrumb can fire)
-    # instead of being reaped silently. Token-level merge: respect any
-    # user-supplied --max-old-space-size (they may have set it higher).
-    # --expose-gc is *not* added here: Node rejects it in NODE_OPTIONS
-    # ("--expose-gc is not allowed in NODE_OPTIONS") and refuses to start.
-    # It is passed as a direct argv flag in _make_tui_argv() instead.
-    _tokens = env.get("NODE_OPTIONS", "").split()
-    if not any(t.startswith("--max-old-space-size=") for t in _tokens):
-        _tokens.append(f"--max-old-space-size={_resolve_tui_heap_mb()}")
-    env["NODE_OPTIONS"] = " ".join(_tokens)
-    # HERMES_TUI_RESUME is an internal hand-off from the Python wrapper to the
-    # Ink app.  Because we start from os.environ.copy(), an exported/stale value
-    # in the user's shell would otherwise make a plain `hermes --tui` try to
-    # resume a non-existent session and leave the UI at "error: session not
-    # found" with no live session.  Only forward a resume id that argparse
-    # resolved for this invocation; direct `node ui-tui/dist/entry.js` users can
-    # still set HERMES_TUI_RESUME themselves.
-    env.pop("HERMES_TUI_RESUME", None)
-    if resume_session_id:
-        env["HERMES_TUI_RESUME"] = resume_session_id
-
-    argv, cwd = _make_tui_argv(tui_dir, tui_dev)
-    code: Optional[int] = None
-    try:
-        try:
-            code = subprocess.call(argv, cwd=str(cwd), env=env)
-        except KeyboardInterrupt:
-            code = 130
-
-        if code in {0, 130}:
-            _print_tui_exit_summary(resume_session_id, active_session_file)
-    finally:
-        try:
-            os.unlink(active_session_file)
-        except OSError:
-            pass
-        if wt_info:
-            try:
-                _cleanup_worktree(wt_info)
-            except Exception:
-                pass
-
-    # Exit code 42 = TUI requested an update. Relaunch as `hermes update` so
-    # the user sees update output directly and gets the new version.
-    # preserve_inherited=False ensures --tui and other flags are NOT carried
-    # into the update subcommand.
-    if code == 42:
-        from hermes_cli.relaunch import relaunch
-
-        print()
-        print("⚕ Launching update...")
-        print()
-        relaunch(["update"], preserve_inherited=False)
-
-    sys.exit(code)
-
-
-def _pin_kanban_board_env() -> None:
-    """Pin the active kanban board into ``HERMES_KANBAN_BOARD`` for the chat session.
-
-    Without this, in-process tools (``kanban_*``) and shelled-out CLI calls
-    (``hermes kanban …``) resolve the board on different paths: the env-pin if
-    set, otherwise the global ``<root>/kanban/current`` file. A concurrent
-    ``hermes kanban boards switch`` from another session can flip the file
-    mid-turn, so the same chat sees its tool calls hit board A while its shell
-    calls hit board B (#20074). Pinning at chat boot mirrors what the
-    dispatcher already does for spawned workers.
-    """
-    if os.environ.get("HERMES_KANBAN_BOARD"):
-        return
-    try:
-        from hermes_cli.kanban_db import get_current_board
-
-        os.environ["HERMES_KANBAN_BOARD"] = get_current_board()
-    except Exception:
-        pass
-
+def _launch_tui(*args, **kwargs):
+    print("TUI was removed. Use `hermes chat` (classic CLI).", file=sys.stderr)
+    raise SystemExit(1)
 
 def _sync_bundled_skills_quietly() -> None:
     """Seed ``~/.hermes/skills/`` with the bundled skill library on first launch.
@@ -2169,7 +1967,9 @@ def cmd_gateway(args):
 
     from hermes_cli.gateway import gateway_command
 
-    gateway_command(args)
+    rc = gateway_command(args)
+    if isinstance(rc, int) and rc != 0:
+        raise SystemExit(rc)
 
 
 def cmd_proxy(args):
@@ -2184,225 +1984,9 @@ def cmd_proxy(args):
 
 
 def cmd_whatsapp(args):
-    """Set up WhatsApp: choose mode, configure, install bridge, pair via QR."""
-    _require_tty("whatsapp")
-    from hermes_cli.config import get_env_value, save_env_value
-
-    print()
-    print("⚕ WhatsApp Setup")
-    print("=" * 50)
-
-    # ── Step 1: Choose mode ──────────────────────────────────────────────
-    current_mode = get_env_value("WHATSAPP_MODE") or ""
-    if not current_mode:
-        print()
-        print("How will you use WhatsApp with Hermes?")
-        print()
-        print("  1. Separate bot number (recommended)")
-        print("     People message the bot's number directly — cleanest experience.")
-        print(
-            "     Requires a second phone number with WhatsApp installed on a device."
-        )
-        print()
-        print("  2. Personal number (self-chat)")
-        print("     You message yourself to talk to the agent.")
-        print("     Quick to set up, but the UX is less intuitive.")
-        print()
-        try:
-            choice = input("  Choose [1/2]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nSetup cancelled.")
-            return
-
-        if choice == "1":
-            save_env_value("WHATSAPP_MODE", "bot")
-            wa_mode = "bot"
-            print("  ✓ Mode: separate bot number")
-            print()
-            print("  ┌─────────────────────────────────────────────────┐")
-            print("  │  Getting a second number for the bot:           │")
-            print("  │                                                 │")
-            print("  │  Easiest: Install WhatsApp Business (free app)  │")
-            print("  │  on your phone with a second number:            │")
-            print("  │    • Dual-SIM: use your 2nd SIM slot            │")
-            print("  │    • Google Voice: free US number (voice.google) │")
-            print("  │    • Prepaid SIM: $3-10, verify once            │")
-            print("  │                                                 │")
-            print("  │  WhatsApp Business runs alongside your personal │")
-            print("  │  WhatsApp — no second phone needed.             │")
-            print("  └─────────────────────────────────────────────────┘")
-        else:
-            save_env_value("WHATSAPP_MODE", "self-chat")
-            wa_mode = "self-chat"
-            print("  ✓ Mode: personal number (self-chat)")
-    else:
-        wa_mode = current_mode
-        mode_label = (
-            "separate bot number" if wa_mode == "bot" else "personal number (self-chat)"
-        )
-        print(f"\n✓ Mode: {mode_label}")
-
-    # ── Step 2: Mode is selected, will enable WhatsApp only after pairing ──
-    # We intentionally don't write WHATSAPP_ENABLED=true here.  If the user
-    # aborts the wizard later (Ctrl+C, failed npm install, missed QR scan),
-    # we'd otherwise leave .env claiming WhatsApp is ready when the bridge
-    # has no creds.json.  Every subsequent `hermes gateway` then paid a 30s
-    # bridge-bootstrap timeout and queued WhatsApp for indefinite retries.
-    # Now: aborted setup leaves WHATSAPP_ENABLED unset → gateway skips it.
-    # Re-runs that already have WHATSAPP_ENABLED=true (from a prior
-    # successful pairing) stay enabled — we just don't write it pre-emptively.
-    print()
-    if (get_env_value("WHATSAPP_ENABLED") or "").lower() == "true":
-        print("✓ WhatsApp is already enabled")
-
-    # ── Step 3: Allowed users ────────────────────────────────────────────
-    current_users = get_env_value("WHATSAPP_ALLOWED_USERS") or ""
-    if current_users:
-        print(f"✓ Allowed users: {current_users}")
-        try:
-            response = input("\n  Update allowed users? [y/N] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            response = "n"
-        if response.lower() in {"y", "yes"}:
-            if wa_mode == "bot":
-                phone = input(
-                    "  Phone numbers that can message the bot (comma-separated): "
-                ).strip()
-            else:
-                phone = input("  Your phone number (e.g. 15551234567): ").strip()
-            if phone:
-                save_env_value("WHATSAPP_ALLOWED_USERS", phone.replace(" ", ""))
-                print(f"  ✓ Updated to: {phone}")
-    else:
-        print()
-        if wa_mode == "bot":
-            print("  Who should be allowed to message the bot?")
-            phone = input(
-                "  Phone numbers (comma-separated, or * for anyone): "
-            ).strip()
-        else:
-            phone = input("  Your phone number (e.g. 15551234567): ").strip()
-        if phone:
-            save_env_value("WHATSAPP_ALLOWED_USERS", phone.replace(" ", ""))
-            print(f"  ✓ Allowed users set: {phone}")
-        else:
-            print("  ⚠ No allowlist — the agent will respond to ALL incoming messages")
-
-    # ── Step 4: Install bridge dependencies ──────────────────────────────
-    project_root = Path(__file__).resolve().parents[1]
-    bridge_dir = project_root / "scripts" / "whatsapp-bridge"
-    bridge_script = bridge_dir / "bridge.js"
-
-    if not bridge_script.exists():
-        print(f"\n✗ Bridge script not found at {bridge_script}")
-        return
-
-    if not (bridge_dir / "node_modules").exists():
-        print(
-            "\n→ Installing WhatsApp bridge dependencies (this can take a few minutes)..."
-        )
-        npm = shutil.which("npm")
-        if not npm:
-            print("  ✗ npm not found on PATH — install Node.js first")
-            return
-        try:
-            result = subprocess.run(
-                [npm, "install", "--no-fund", "--no-audit", "--progress=false"],
-                cwd=str(bridge_dir),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        except KeyboardInterrupt:
-            print("\n  ✗ Install cancelled")
-            return
-        if result.returncode != 0:
-            err = (result.stderr or "").strip()
-            preview = "\n".join(err.splitlines()[-30:]) if err else "(no output)"
-            print("  ✗ npm install failed:")
-            print(preview)
-            return
-        print("  ✓ Dependencies installed")
-    else:
-        print("✓ Bridge dependencies already installed")
-
-    # ── Step 5: Check for existing session ───────────────────────────────
-    session_dir = get_hermes_home() / "whatsapp" / "session"
-    session_dir.mkdir(parents=True, exist_ok=True)
-
-    if (session_dir / "creds.json").exists():
-        print("✓ Existing WhatsApp session found")
-        try:
-            response = input(
-                "\n  Re-pair? This will clear the existing session. [y/N] "
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            response = "n"
-        if response.lower() in {"y", "yes"}:
-            shutil.rmtree(session_dir, ignore_errors=True)
-            session_dir.mkdir(parents=True, exist_ok=True)
-            print("  ✓ Session cleared")
-        else:
-            # Existing pairing — ensure WHATSAPP_ENABLED reflects that.
-            # (Older installs may have lost the env var; covers re-runs
-            # where the user picked "no, keep my session" but the var
-            # was never set or got removed.)
-            if (get_env_value("WHATSAPP_ENABLED") or "").lower() != "true":
-                save_env_value("WHATSAPP_ENABLED", "true")
-            print("\n✓ WhatsApp is configured and paired!")
-            print("  Start the gateway with: hermes gateway")
-            return
-
-    # ── Step 6: QR code pairing ──────────────────────────────────────────
-    print()
-    print("─" * 50)
-    if wa_mode == "bot":
-        print("📱 Open WhatsApp (or WhatsApp Business) on the")
-        print("   phone with the BOT's number, then scan:")
-    else:
-        print("📱 Open WhatsApp on your phone, then scan:")
-    print()
-    print("   Settings → Linked Devices → Link a Device")
-    print("─" * 50)
-    print()
-
-    try:
-        subprocess.run(
-            ["node", str(bridge_script), "--pair-only", "--session", str(session_dir)],
-            cwd=str(bridge_dir),
-        )
-    except KeyboardInterrupt:
-        pass
-
-    # ── Step 7: Post-pairing ─────────────────────────────────────────────
-    print()
-    if (session_dir / "creds.json").exists():
-        # Only enable WhatsApp now that pairing actually succeeded.  If the
-        # user Ctrl+C'd at any earlier step, WHATSAPP_ENABLED stays unset
-        # and `hermes gateway` skips it cleanly instead of paying a 30s
-        # bridge timeout + queueing the platform for indefinite retries.
-        save_env_value("WHATSAPP_ENABLED", "true")
-        print("✓ WhatsApp paired successfully!")
-        print()
-        if wa_mode == "bot":
-            print("  Next steps:")
-            print("    1. Start the gateway:  hermes gateway")
-            print("    2. Send a message to the bot's WhatsApp number")
-            print("    3. The agent will reply automatically")
-            print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
-        else:
-            print("  Next steps:")
-            print("    1. Start the gateway:  hermes gateway")
-            print("    2. Open WhatsApp → Message Yourself")
-            print("    3. Type a message — the agent will reply")
-            print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
-            print("  so you can tell them apart from your own messages.")
-        print()
-        print("  Or install as a service: hermes gateway install")
-    else:
-        print("⚠ Pairing may not have completed. Run 'hermes whatsapp' to try again.")
+    """WhatsApp integration was removed with the messaging gateway."""
+    print("WhatsApp integration is not available in this CLI-only build.", file=sys.stderr)
+    return 1
 
 
 def cmd_setup(args):
@@ -6530,11 +6114,8 @@ def cmd_status(args):
 
 
 def cmd_cron(args):
-    """Cron job management."""
-    from hermes_cli.cron import cron_command
-
-    cron_command(args)
-
+    print("Cron scheduling was removed from this minimal build.", file=sys.stderr)
+    raise SystemExit(1)
 
 def cmd_webhook(args):
     """Webhook subscription management."""
@@ -6544,41 +6125,9 @@ def cmd_webhook(args):
 
 
 def cmd_slack(args):
-    """Slack integration helpers.
-
-    Dispatches ``hermes slack <subcommand>``. Currently supports:
-      manifest — print or write a Slack app manifest with every gateway
-                 command registered as a first-class slash.
-    """
-    sub = getattr(args, "slack_command", None)
-    if sub in {None, ""}:
-        # No subcommand — print usage hint.
-        print(
-            "usage: hermes slack <subcommand>\n"
-            "\n"
-            "subcommands:\n"
-            "  manifest   Generate a Slack app manifest with every gateway\n"
-            "             command registered as a native slash\n"
-            "\n"
-            "Run `hermes slack manifest -h` for details.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if sub == "manifest":
-        from hermes_cli.slack_cli import slack_manifest_command
-
-        return slack_manifest_command(args)
-
-    print(f"Unknown slack subcommand: {sub}", file=sys.stderr)
+    """Slack integration was removed with the messaging gateway."""
+    print("Slack integration is not available in this CLI-only build.", file=sys.stderr)
     return 1
-
-
-def cmd_kanban(args):
-    """Multi-profile collaboration board."""
-    from hermes_cli.kanban import kanban_command
-
-    return kanban_command(args)
 
 
 def cmd_hooks(args):
@@ -7523,158 +7072,9 @@ def _desktop_linux_sandbox_fixup(packaged_executable: Path) -> bool:
     return True
 
 
-def cmd_gui(args: argparse.Namespace):
-    """Build and launch the native Electron desktop GUI."""
-    desktop_dir = PROJECT_ROOT / "apps" / "desktop"
-    if not (desktop_dir / "package.json").exists():
-        print(f"Desktop GUI source not found at: {desktop_dir}")
-        sys.exit(1)
-
-    try:
-        from hermes_logging import setup_logging as _setup_logging_gui
-        _setup_logging_gui(mode="gui")
-    except Exception:
-        pass
-
-    env = os.environ.copy()
-    if getattr(args, "fake_boot", False):
-        env["HERMES_DESKTOP_BOOT_FAKE"] = "1"
-    if getattr(args, "ignore_existing", False):
-        env["HERMES_DESKTOP_IGNORE_EXISTING"] = "1"
-    if getattr(args, "hermes_root", None):
-        env["HERMES_DESKTOP_HERMES_ROOT"] = str(Path(args.hermes_root).expanduser().resolve())
-    if getattr(args, "cwd", None):
-        env["HERMES_DESKTOP_CWD"] = str(Path(args.cwd).expanduser().resolve())
-
-    source_mode = getattr(args, "source", False)
-    skip_build = getattr(args, "skip_build", False)
-    force_build = getattr(args, "force_build", False)
-
-    packaged_executable = _desktop_packaged_executable(desktop_dir)
-
-    if source_mode or not skip_build:
-        npm = shutil.which("npm")
-        if not npm:
-            print("Desktop GUI requires Node.js/npm, but npm was not found on PATH.")
-            print("Install Node.js, then run:  hermes gui")
-            sys.exit(1)
-    else:
-        npm = None
-
-    if skip_build:
-        if source_mode:
-            if not _desktop_dist_exists(desktop_dir):
-                print(f"✗ --skip-build --source was passed but no desktop dist found at: {desktop_dir / 'dist'}")
-                print("  Pre-build first:  cd apps/desktop && npm run build")
-                print("  Or drop --skip-build to install dependencies and build automatically.")
-                sys.exit(1)
-            if not (PROJECT_ROOT / "node_modules" / "electron" / "package.json").exists():
-                print("✗ --skip-build --source requires existing workspace dependencies.")
-                print(f"  Install first:  cd {PROJECT_ROOT} && npm ci")
-                print("  Or drop --skip-build to install dependencies and build automatically.")
-                sys.exit(1)
-            print(f"→ Skipping desktop source build (--skip-build --source); using dist at {desktop_dir / 'dist'}")
-        elif packaged_executable is None:
-            print(f"✗ --skip-build was passed but no packaged desktop app was found at: {desktop_dir / 'release'}")
-            print("  Pre-build first:  cd apps/desktop && npm run pack")
-            print("  Or drop --skip-build to package automatically.")
-            sys.exit(1)
-        else:
-            print(f"→ Skipping desktop package build (--skip-build); using {packaged_executable}")
-    else:
-        # Check the content-hash stamp before doing any build work.
-        # If the source tree hasn't changed since the last successful build,
-        # skip the npm install + build entirely (saves a ton of useless work).
-        # --force-build overrides the stamp and always rebuilds.
-        build_needed = force_build or _desktop_build_needed(
-            desktop_dir, PROJECT_ROOT, source_mode=source_mode
-        )
-        if not build_needed:
-            build_label = "source build" if source_mode else "packaged app"
-            print(f"✓ Desktop {build_label} is up to date (content stamp matches)")
-        else:
-            print("→ Installing desktop workspace dependencies...")
-            install_result = _run_npm_install_deterministic(npm, PROJECT_ROOT, capture_output=False)
-            if install_result.returncode != 0:
-                print("✗ Desktop dependency install failed")
-                print(f"  Run manually:  cd {PROJECT_ROOT} && npm ci")
-                sys.exit(install_result.returncode or 1)
-
-            build_label = "source build" if source_mode else "packaged app"
-            print(f"→ Building desktop {build_label}...")
-            build_script = "build" if source_mode else "pack"
-            build_result = subprocess.run([npm, "run", build_script], cwd=desktop_dir, env=env, check=False)
-            if build_result.returncode != 0 and not source_mode:
-                # A corrupt cached Electron zip makes `pack` fail with an ENOENT
-                # on the final `electron` -> `Hermes` rename: unpack-electron
-                # extracted a partial tree (missing the 193 MB binary) from the
-                # bad zip. We do NOT try to prove the zip is corrupt ourselves —
-                # stdlib zipfile silently tolerates the prepended/concatenated
-                # junk that is the most common corruption (a partial download
-                # resumed into the same file), so a `testzip()` gate would pass
-                # and never self-heal. Instead, on any packaged-build failure we
-                # purge the version's cached zip + the half-written unpacked dir
-                # and retry once: @electron/get re-downloads with its own SHASUM
-                # verification, which is the real source of truth. If the
-                # failure was something else, the clean re-download is harmless
-                # and the retry fails the same way.
-                purged = _purge_electron_build_cache(desktop_dir)
-                if purged:
-                    print("  ⚠ Desktop build failed; cleared cached Electron download and retrying once...")
-                    for p in purged:
-                        print(f"    - {p}")
-                    build_result = subprocess.run([npm, "run", build_script], cwd=desktop_dir, env=env, check=False)
-            if build_result.returncode != 0:
-                print("✗ Desktop GUI build failed")
-                print(f"  Run manually:  cd apps/desktop && npm run {build_script}")
-                sys.exit(build_result.returncode or 1)
-            packaged_executable = _desktop_packaged_executable(desktop_dir)
-            if not source_mode:
-                # Locally-built apps are ad-hoc signed; make them relaunchable after
-                # an in-place self-update (otherwise macOS reports "Hermes is
-                # damaged"). No-op on non-macOS and on real-identity builds.
-                _desktop_macos_relaunchable_fixup(desktop_dir)
-
-            # Build succeeded — write the stamp so next run can skip
-            _write_desktop_build_stamp(PROJECT_ROOT, source_mode=source_mode)
-
-    # --build-only: produce the artifact but do NOT launch. The installer's
-    # --update flow drives the rebuild headlessly and then launches the desktop
-    # itself (detached, after the old exe has exited), so the launch must NOT
-    # happen here — it would block the installer and, on Windows, the old exe
-    # is still being replaced. Verify the expected artifact exists so a silent
-    # "built nothing" can't slip past, then return success.
-    if getattr(args, "build_only", False):
-        if source_mode:
-            if not _desktop_dist_exists(desktop_dir):
-                print(f"✗ --build-only --source produced no dist at: {desktop_dir / 'dist'}")
-                sys.exit(1)
-            print(f"✓ Desktop source build ready at {desktop_dir / 'dist'} (not launching; --build-only)")
-        elif packaged_executable is None:
-            print(f"✗ --build-only produced no launchable app at: {desktop_dir / 'release'}")
-            print("  Expected an unpacked Electron app for the current OS.")
-            sys.exit(1)
-        else:
-            print(f"✓ Desktop packaged app ready: {packaged_executable} (not launching; --build-only)")
-        return
-
-    if source_mode:
-        print("→ Launching Hermes Desktop from source build...")
-        launch_result = subprocess.run([npm, "exec", "--", "electron", "."], cwd=desktop_dir, env=env, check=False)
-        sys.exit(launch_result.returncode)
-
-    if packaged_executable is None:
-        print(f"✗ Desktop package build completed but no launchable app was found at: {desktop_dir / 'release'}")
-        print("  Expected an unpacked Electron app for the current OS.")
-        sys.exit(1)
-
-    if not _desktop_linux_sandbox_fixup(packaged_executable):
-        sys.exit(1)
-
-    print(f"→ Launching packaged Hermes Desktop: {packaged_executable}")
-    launch_result = subprocess.run([str(packaged_executable)], cwd=desktop_dir, env=env, check=False)
-    sys.exit(launch_result.returncode)
-
+def cmd_gui(args):
+    print("Desktop GUI was removed. Use `hermes chat`.", file=sys.stderr)
+    raise SystemExit(1)
 
 def _find_stale_dashboard_pids(
     *,
@@ -10344,10 +9744,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
             if method == "pip":
                 _cmd_update_pip(args)
                 return
-            print("✗ Not a git repository. Please reinstall:")
-            print(
-                "  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
-            )
+            print("✗ Not a git repository. Reinstall from the repo checkout:")
+            print("  pip install -e .   # or: uv pip install -e .")
             sys.exit(1)
 
     # On Windows, git can fail with "unable to write loose object file: Invalid argument"
@@ -12373,107 +11771,12 @@ def _report_dashboard_status() -> int:
 
 
 def cmd_dashboard(args):
-    """Start the web UI server, or (with --stop/--status) manage running ones."""
-    # --status: report running dashboards and exit, no deps needed.
-    if getattr(args, "status", False):
-        count = _report_dashboard_status()
-        sys.exit(0 if count == 0 else 0)  # status is informational, always 0
-
-    # --stop: kill any running dashboards and exit, no deps needed.
-    if getattr(args, "stop", False):
-        pids = _find_stale_dashboard_pids()
-        if not pids:
-            print("No hermes dashboard processes running.")
-            sys.exit(0)
-        # Reuse the same SIGTERM-grace-SIGKILL path used after `hermes update`.
-        _kill_stale_dashboard_processes(reason="requested via --stop")
-        # _kill_stale_dashboard_processes prints outcomes itself.  Exit 0 if
-        # we killed at least one, 1 if they were all unkillable.
-        remaining = _find_stale_dashboard_pids()
-        sys.exit(1 if remaining else 0)
-
-    # Attach gui.log early so dashboard startup/build failures are captured in
-    # the same logs directory as every other Hermes surface.
-    try:
-        from hermes_logging import setup_logging as _setup_logging_gui
-        _setup_logging_gui(mode="gui")
-    except Exception:
-        pass
-
-    try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
-    except ImportError as e:
-        print("Web UI dependencies not installed (need fastapi + uvicorn).")
-        print(
-            f"Re-install the package into this interpreter so metadata updates apply:\n"
-            f"  cd {PROJECT_ROOT}\n"
-            f"  {sys.executable} -m pip install -e .\n"
-            "If `pip` is missing in this venv, use:  uv pip install -e ."
-        )
-        print(f"Import error: {e}")
-        sys.exit(1)
-
-    # Seed bundled skills on first dashboard launch so the desktop GUI's
-    # skills picker / agent skill discovery sees the bundled library.
-    # cmd_chat does this in its own pre-dispatch block; the dashboard
-    # backend is the desktop's primary entrypoint and needs the same.
-    _sync_bundled_skills_quietly()
-
-    if "HERMES_WEB_DIST" not in os.environ and not getattr(args, "skip_build", False):
-        if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
-            sys.exit(1)
-    elif getattr(args, "skip_build", False):
-        # --build-mode skip trusts the caller to have pre-built the web UI.
-        # Verify the dist actually exists; otherwise the server will start
-        # and serve 404s with no obvious cause (issue #23817).
-        _dist_root = (
-            Path(os.environ["HERMES_WEB_DIST"])
-            if "HERMES_WEB_DIST" in os.environ
-            else PROJECT_ROOT / "hermes_cli" / "web_dist"
-        )
-        if not (_dist_root / "index.html").exists():
-            print(f"✗ --skip-build was passed but no web dist found at: {_dist_root}")
-            print("  Pre-build first:  npm install --workspace web && npm run build -w web")
-            print("  Or drop --skip-build to build automatically.")
-            sys.exit(1)
-        print(f"→ Skipping web UI build (--skip-build); using dist at {_dist_root}")
-
-    # Discover and load plugins so any DashboardAuthProvider plugin
-    # (e.g. plugins/dashboard_auth/nous) registers BEFORE start_server's
-    # fail-closed gate check runs. The top-level argparse setup skips
-    # plugin discovery for built-in subcommands like ``dashboard`` to
-    # save ~500ms startup; we have to trigger it explicitly here because
-    # the dashboard's server-side runtime depends on plugin-registered
-    # providers (image_gen, web, dashboard_auth, …).
-    try:
-        from hermes_cli.plugins import discover_plugins
-        discover_plugins()
-    except Exception as exc:
-        # Discovery failures must not block dashboard startup outright —
-        # log and proceed; the gate's fail-closed branch will surface
-        # the missing-provider state if it matters.
-        print(f"⚠ Plugin discovery failed: {exc}", file=sys.stderr)
-
-    from hermes_cli.web_server import start_server
-
-    # The in-browser Chat tab (the embedded TUI over PTY/WebSocket) is always
-    # available — the desktop app and the dashboard's own Chat tab both rely on
-    # the `/api/ws` + `/api/pty` sockets, so there is no reason to gate them.
-    start_server(
-        host=args.host,
-        port=args.port,
-        open_browser=not args.no_open,
-        allow_public=getattr(args, "insecure", False),
-    )
-
+    print("Web dashboard was removed. Use `hermes chat`.", file=sys.stderr)
+    raise SystemExit(1)
 
 def cmd_dashboard_register(args):
-    """Register a self-hosted dashboard OAuth client with Nous Portal."""
-    from hermes_cli.dashboard_register import cmd_dashboard_register as _impl
-
-    _impl(args)
-
+    print("Web dashboard was removed.", file=sys.stderr)
+    raise SystemExit(1)
 
 def cmd_completion(args, parser=None):
     """Print shell completion script."""
@@ -12529,7 +11832,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
-        "gui", "desktop", "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
+        "gui", "desktop", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate",
         "model", "pairing", "plugins", "portal", "postinstall", "profile", "proxy",
         "prompt-size",
         "send", "sessions", "setup",
@@ -13050,196 +12353,14 @@ def main():
     migrate_parser.set_defaults(func=cmd_migrate)
 
     # =========================================================================
-    # gateway command
+    # gateway command (removed — CLI-only build)
     # =========================================================================
     gateway_parser = subparsers.add_parser(
         "gateway",
-        help="Messaging gateway management",
-        description="Manage the messaging gateway (Telegram, Discord, WhatsApp, Weixin, and more)",
+        help="(removed) Messaging gateway",
+        description="Messaging gateway was removed. Use `hermes chat` instead.",
     )
-    gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command")
-
-    # gateway run (default)
-    gateway_run = gateway_subparsers.add_parser(
-        "run", help="Run gateway in foreground (recommended for WSL, Docker, Termux)"
-    )
-    gateway_run.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Increase stderr log verbosity (-v=INFO, -vv=DEBUG)",
-    )
-    gateway_run.add_argument(
-        "-q", "--quiet", action="store_true", help="Suppress all stderr log output"
-    )
-    gateway_run.add_argument(
-        "--replace",
-        action="store_true",
-        help="Replace any existing gateway instance (useful for systemd)",
-    )
-    gateway_run.add_argument(
-        "--no-supervise",
-        action="store_true",
-        help=(
-            "Inside the s6-overlay Docker image, normally `gateway run` is "
-            "automatically redirected to the supervised s6 service (so the "
-            "gateway gets auto-restart on crash, plus a supervised dashboard "
-            "if HERMES_DASHBOARD is set). Pass --no-supervise to opt out and "
-            "get the historical pre-s6 foreground behavior: the gateway is "
-            "the container's main process and the container exits with the "
-            "gateway's exit code. No effect outside an s6 container."
-        ),
-    )
-    _add_accept_hooks_flag(gateway_run)
-    _add_accept_hooks_flag(gateway_parser)
-
-    # gateway start
-    gateway_start = gateway_subparsers.add_parser(
-        "start", help="Start the installed systemd/launchd background service"
-    )
-    gateway_start.add_argument(
-        "--system",
-        action="store_true",
-        help="Target the Linux system-level gateway service",
-    )
-    gateway_start.add_argument(
-        "--all",
-        action="store_true",
-        help="Kill ALL stale gateway processes across all profiles before starting",
-    )
-
-    # gateway stop
-    gateway_stop = gateway_subparsers.add_parser("stop", help="Stop gateway service")
-    gateway_stop.add_argument(
-        "--system",
-        action="store_true",
-        help="Target the Linux system-level gateway service",
-    )
-    gateway_stop.add_argument(
-        "--all",
-        action="store_true",
-        help="Stop ALL gateway processes across all profiles",
-    )
-
-    # gateway restart
-    gateway_restart = gateway_subparsers.add_parser(
-        "restart", help="Restart gateway service"
-    )
-    gateway_restart.add_argument(
-        "--system",
-        action="store_true",
-        help="Target the Linux system-level gateway service",
-    )
-    gateway_restart.add_argument(
-        "--all",
-        action="store_true",
-        help="Kill ALL gateway processes across all profiles before restarting",
-    )
-
-    # gateway status
-    gateway_status = gateway_subparsers.add_parser("status", help="Show gateway status")
-    gateway_status.add_argument("--deep", action="store_true", help="Deep status check")
-    gateway_status.add_argument(
-        "-l",
-        "--full",
-        action="store_true",
-        help="Show full, untruncated service/log output where supported",
-    )
-    gateway_status.add_argument(
-        "--system",
-        action="store_true",
-        help="Target the Linux system-level gateway service",
-    )
-
-    # gateway install
-    gateway_install = gateway_subparsers.add_parser(
-        "install", help="Install gateway as a systemd/launchd background service"
-    )
-    gateway_install.add_argument("--force", action="store_true", help="Force reinstall")
-    gateway_install.add_argument(
-        "--system",
-        action="store_true",
-        help="Install as a Linux system-level service (starts at boot)",
-    )
-    gateway_install.add_argument(
-        "--run-as-user",
-        dest="run_as_user",
-        help="User account the Linux system service should run as",
-    )
-    gateway_install.add_argument(
-        "--start-now",
-        dest="start_now",
-        action="store_true",
-        default=None,
-        help=argparse.SUPPRESS,
-    )
-    gateway_install.add_argument(
-        "--no-start-now",
-        dest="start_now",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    gateway_install.add_argument(
-        "--start-on-login",
-        dest="start_on_login",
-        action="store_true",
-        default=None,
-        help=argparse.SUPPRESS,
-    )
-    gateway_install.add_argument(
-        "--no-start-on-login",
-        dest="start_on_login",
-        action="store_false",
-        help=argparse.SUPPRESS,
-    )
-    gateway_install.add_argument(
-        "--elevated-handoff",
-        dest="elevated_handoff",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
-
-    # gateway uninstall
-    gateway_uninstall = gateway_subparsers.add_parser(
-        "uninstall", help="Uninstall gateway service"
-    )
-    gateway_uninstall.add_argument(
-        "--system",
-        action="store_true",
-        help="Target the Linux system-level gateway service",
-    )
-
-    # gateway list
-    gateway_subparsers.add_parser("list", help="List all profiles and their gateway status")
-
-    # gateway setup
-    gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
-
-    # gateway migrate-legacy
-    gateway_migrate_legacy = gateway_subparsers.add_parser(
-        "migrate-legacy",
-        help="Remove legacy hermes.service units from pre-rename installs",
-        description=(
-            "Stop, disable, and remove legacy Hermes gateway unit files "
-            "(e.g. hermes.service) left over from older installs. Profile "
-            "units (hermes-gateway-<profile>.service) and unrelated "
-            "third-party services are never touched."
-        ),
-    )
-    gateway_migrate_legacy.add_argument(
-        "--dry-run",
-        dest="dry_run",
-        action="store_true",
-        help="List what would be removed without doing it",
-    )
-    gateway_migrate_legacy.add_argument(
-        "-y",
-        "--yes",
-        dest="yes",
-        action="store_true",
-        help="Skip the confirmation prompt",
-    )
+    gateway_parser.set_defaults(func=cmd_gateway)
 
     # =========================================================================
     # proxy command — local OpenAI-compatible proxy that attaches the user's
@@ -13286,7 +12407,6 @@ def main():
         "providers", help="List available proxy upstream providers"
     )
     proxy_parser.set_defaults(func=cmd_proxy)
-    gateway_parser.set_defaults(func=cmd_gateway)
 
     # =========================================================================
     # lsp command
@@ -13476,7 +12596,7 @@ def main():
     )
     logout_parser.add_argument(
         "--provider",
-        choices=["nous", "openai-codex", "xai-oauth", "spotify"],
+        choices=["nous", "openai-codex", "xai-oauth"],
         default=None,
         help="Provider to log out from (default: active provider)",
     )
@@ -13552,31 +12672,6 @@ def main():
         "logout", help="Log out a provider and clear stored auth state"
     )
     auth_logout.add_argument("provider", help="Provider id")
-    auth_spotify = auth_subparsers.add_parser(
-        "spotify", help="Authenticate Hermes with Spotify via PKCE"
-    )
-    auth_spotify.add_argument(
-        "spotify_action",
-        nargs="?",
-        choices=["login", "status", "logout"],
-        default="login",
-    )
-    auth_spotify.add_argument(
-        "--client-id", help="Spotify app client_id (or set HERMES_SPOTIFY_CLIENT_ID)"
-    )
-    auth_spotify.add_argument(
-        "--redirect-uri",
-        help="Allow-listed localhost redirect URI for your Spotify app",
-    )
-    auth_spotify.add_argument("--scope", help="Override requested Spotify scopes")
-    auth_spotify.add_argument(
-        "--no-browser",
-        action="store_true",
-        help="Do not attempt to open the browser automatically",
-    )
-    auth_spotify.add_argument(
-        "--timeout", type=float, help="Callback/token exchange timeout in seconds"
-    )
     auth_parser.set_defaults(func=cmd_auth)
 
     # =========================================================================
@@ -13823,14 +12918,6 @@ def main():
     # =========================================================================
     from hermes_cli.portal_cli import add_parser as _add_portal_parser
     _add_portal_parser(subparsers)
-
-    # =========================================================================
-    # kanban command — multi-profile collaboration board
-    # =========================================================================
-    from hermes_cli.kanban import build_parser as _build_kanban_parser
-
-    kanban_parser = _build_kanban_parser(subparsers)
-    kanban_parser.set_defaults(func=cmd_kanban)
 
     # =========================================================================
     # hooks command — shell-hook inspection and management
@@ -14636,11 +13723,8 @@ Examples:
         "memory",
         help="Configure external memory provider",
         description=(
-            "Set up and manage external memory provider plugins.\n\n"
-            "Available providers: honcho, openviking, mem0, hindsight,\n"
-            "holographic, retaindb, byterover.\n\n"
-            "Only one external provider can be active at a time.\n"
-            "Built-in memory (MEMORY.md/USER.md) is always active."
+            "Manage built-in session memory (MEMORY.md / USER.md).\n\n"
+            "External memory provider plugins were removed from this build."
         ),
     )
     memory_sub = memory_parser.add_subparsers(dest="memory_command")
@@ -14651,7 +13735,7 @@ Examples:
         "provider",
         nargs="?",
         default=None,
-        help="Provider to configure directly (e.g. honcho), skipping the picker",
+        help="(removed) External memory providers are not available in this build",
     )
     memory_sub.add_parser("status", help="Show current memory provider config")
     memory_sub.add_parser("off", help="Disable external provider (built-in only)")
@@ -14812,7 +13896,7 @@ Examples:
             "KittenTTS/Piper, ddgs, Spotify, Langfuse, xAI). Stable,\n"
             "non-interactive target the dashboard spawns to drive backend\n"
             "setup. Keys: agent_browser, camofox, cua_driver, kittentts,\n"
-            "piper, ddgs, spotify, langfuse, xai_grok."
+            "piper, ddgs, langfuse, xai_grok."
         ),
     )
     tools_postsetup_p.add_argument(
@@ -15533,26 +14617,8 @@ Examples:
     )
 
     def cmd_acp(args):
-        """Launch Hermes Agent as an ACP server."""
-        try:
-            from acp_adapter.entry import main as acp_main
-
-            acp_argv = []
-            if getattr(args, "acp_version", False):
-                acp_argv.append("--version")
-            if getattr(args, "check", False):
-                acp_argv.append("--check")
-            if getattr(args, "setup", False):
-                acp_argv.append("--setup")
-            if getattr(args, "setup_browser", False):
-                acp_argv.append("--setup-browser")
-            if getattr(args, "assume_yes", False):
-                acp_argv.append("--yes")
-            acp_main(acp_argv)
-        except ImportError:
-            print("ACP dependencies not installed.", file=sys.stderr)
-            print("Install them with:  pip install -e '.[acp]'", file=sys.stderr)
-            sys.exit(1)
+        print("ACP editor integration was removed.", file=sys.stderr)
+        raise SystemExit(1)
 
     acp_parser.set_defaults(func=cmd_acp)
 

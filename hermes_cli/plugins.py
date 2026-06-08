@@ -532,28 +532,10 @@ class PluginContext:
     # -- image gen provider registration ------------------------------------
 
     def register_image_gen_provider(self, provider) -> None:
-        """Register an image generation backend.
-
-        ``provider`` must be an instance of
-        :class:`agent.image_gen_provider.ImageGenProvider`. The
-        ``provider.name`` attribute is what ``image_gen.provider`` in
-        ``config.yaml`` matches against when routing ``image_generate``
-        tool calls.
-        """
-        from agent.image_gen_provider import ImageGenProvider
-        from agent.image_gen_registry import register_provider
-
-        if not isinstance(provider, ImageGenProvider):
-            logger.warning(
-                "Plugin '%s' tried to register an image_gen provider that does "
-                "not inherit from ImageGenProvider. Ignoring.",
-                self.manifest.name,
-            )
-            return
-        register_provider(provider)
-        logger.info(
-            "Plugin '%s' registered image_gen provider: %s",
-            self.manifest.name, provider.name,
+        """No-op — image generation plugins were removed."""
+        logger.debug(
+            "Plugin '%s' ignored image_gen provider registration (feature removed)",
+            self.manifest.name,
         )
 
     # -- dashboard auth provider registration --------------------------------
@@ -599,28 +581,10 @@ class PluginContext:
     # -- video gen provider registration -------------------------------------
 
     def register_video_gen_provider(self, provider) -> None:
-        """Register a video generation backend.
-
-        ``provider`` must be an instance of
-        :class:`agent.video_gen_provider.VideoGenProvider`. The
-        ``provider.name`` attribute is what ``video_gen.provider`` in
-        ``config.yaml`` matches against when routing ``video_generate``
-        tool calls.
-        """
-        from agent.video_gen_provider import VideoGenProvider
-        from agent.video_gen_registry import register_provider as _register_video_provider
-
-        if not isinstance(provider, VideoGenProvider):
-            logger.warning(
-                "Plugin '%s' tried to register a video_gen provider that does "
-                "not inherit from VideoGenProvider. Ignoring.",
-                self.manifest.name,
-            )
-            return
-        _register_video_provider(provider)
-        logger.info(
-            "Plugin '%s' registered video_gen provider: %s",
-            self.manifest.name, provider.name,
+        """No-op — video generation plugins were removed."""
+        logger.debug(
+            "Plugin '%s' ignored video_gen provider registration (feature removed)",
+            self.manifest.name,
         )
 
     # -- web search/extract provider registration ----------------------------
@@ -799,24 +763,8 @@ class PluginContext:
                 setup_fn=irc_interactive_setup,
             )
         """
-        from gateway.platform_registry import platform_registry, PlatformEntry
-
-        entry_kwargs.setdefault("plugin_name", self.manifest.name)
-        entry = PlatformEntry(
-            name=name,
-            label=label,
-            adapter_factory=adapter_factory,
-            check_fn=check_fn,
-            validate_config=validate_config,
-            required_env=required_env or [],
-            install_hint=install_hint,
-            source="plugin",
-            **entry_kwargs,
-        )
-        platform_registry.register(entry)
-        self._manager._plugin_platform_names.add(name)
         logger.debug(
-            "Plugin %s registered platform: %s",
+            "Plugin %s ignored platform registration for %s (messaging gateway removed)",
             self.manifest.name,
             name,
         )

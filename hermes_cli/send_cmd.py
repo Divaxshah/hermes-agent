@@ -275,7 +275,12 @@ def _load_hermes_env() -> None:
 
 
 def cmd_send(args: argparse.Namespace) -> None:
-    """Entry point wired into the top-level argparse dispatcher."""
+    """Messaging send was removed with the gateway."""
+    print(
+        "hermes send is not available in this CLI-only build. Use `hermes chat`.",
+        file=sys.stderr,
+    )
+    raise SystemExit(_FAILURE_EXIT)
 
     # Bridge ~/.hermes/.env and ~/.hermes/config.yaml into os.environ so the
     # gateway config loader (invoked downstream by send_message_tool and by

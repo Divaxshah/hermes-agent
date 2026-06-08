@@ -866,10 +866,7 @@ def _perform_uninstall(
         print(f"  {hermes_home}/")
         print()
         print("To reinstall later with your existing settings:")
-        if _is_windows():
-            print(color("  iex (irm https://hermes-agent.nousresearch.com/install.ps1)", Colors.DIM))
-        else:
-            print(color("  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", Colors.DIM))
+        print(color("  pip install -e .   # or: uv pip install -e .", Colors.DIM))
         print()
 
     if _is_windows():

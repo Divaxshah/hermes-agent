@@ -422,60 +422,6 @@ def _print_setup_summary(config: dict, hermes_home):
             ("Browser Automation", False, missing_browser_hint)
         )
 
-    # Image generation — FAL (direct or via Nous), or any plugin-registered
-    # provider (OpenAI, etc.)
-    if subscription_features.image_gen.managed_by_nous:
-        tool_status.append(("Image Generation (Nous subscription)", True, None))
-    elif subscription_features.image_gen.available:
-        tool_status.append(("Image Generation", True, None))
-    else:
-        # Fall back to probing plugin-registered providers so OpenAI-only
-        # setups don't show as "missing FAL_KEY".
-        _img_backend = None
-        try:
-            from agent.image_gen_registry import list_providers
-            from hermes_cli.plugins import _ensure_plugins_discovered
-
-            _ensure_plugins_discovered()
-            for _p in list_providers():
-                if _p.name == "fal":
-                    continue
-                try:
-                    if _p.is_available():
-                        _img_backend = _p.display_name
-                        break
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        if _img_backend:
-            tool_status.append((f"Image Generation ({_img_backend})", True, None))
-        else:
-            tool_status.append(("Image Generation", False, "FAL_KEY or OPENAI_API_KEY"))
-
-    # Video generation — opt-in via `hermes tools` → Video Generation.
-    # Only show the row when a plugin reports available so we don't badger
-    # users who don't care about video gen with a "missing" status line.
-    if subscription_features.video_gen.managed_by_nous:
-        tool_status.append(("Video Generation (FAL via Nous subscription)", True, None))
-    else:
-        try:
-            from agent.video_gen_registry import list_providers as _list_video_providers
-            from hermes_cli.plugins import _ensure_plugins_discovered as _ensure_plugins
-            _ensure_plugins()
-            _video_backend = None
-            for _vp in _list_video_providers():
-                try:
-                    if _vp.is_available():
-                        _video_backend = _vp.display_name
-                        break
-                except Exception:
-                    continue
-        except Exception:
-            _video_backend = None
-        if _video_backend:
-            tool_status.append((f"Video Generation ({_video_backend})", True, None))
-
     # TTS — show configured provider
     tts_provider = cfg_get(config, "tts", "provider", default="edge")
     if subscription_features.tts.managed_by_nous:
@@ -1796,8 +1742,11 @@ def _setup_telegram():
 
 
 def _setup_slack():
-    """Configure Slack bot credentials."""
+    """Slack integration was removed with the messaging gateway."""
     print_header("Slack")
+    print_info("Slack integration is not available in this CLI-only build.")
+    return
+
     existing = get_env_value("SLACK_BOT_TOKEN")
     if existing:
         print_info("Slack: already configured")
@@ -1873,6 +1822,9 @@ def _write_slack_manifest_and_instruct():
     fails for any reason, we print a warning and skip rather than abort
     the whole Slack setup.
     """
+    print_info("Slack manifest generation is not available in this CLI-only build.")
+    return
+
     try:
         from hermes_cli.slack_cli import _build_full_manifest
         from hermes_constants import get_hermes_home
@@ -2141,10 +2093,14 @@ def _setup_webhooks():
 
 
 def setup_gateway(config: dict):
-    """Configure messaging platform integrations."""
+    """Messaging platforms were removed — CLI-only build."""
+    print_header("Messaging Platforms")
+    print_info("Messaging gateway integrations were removed from this build.")
+    print_info("Use `hermes chat` for interactive CLI sessions.")
+    return
+
     from hermes_cli.gateway import _all_platforms, _platform_status, _configure_platform
 
-    print_header("Messaging Platforms")
     print_info("Connect to messaging platforms to chat with Hermes from anywhere.")
     print_info("Toggle with Space, confirm with Enter.")
     print()

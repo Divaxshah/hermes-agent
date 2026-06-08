@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [code-review, security, verification, quality, pre-commit, auto-fix]
-    related_skills: [subagent-driven-development, plan, test-driven-development, github-code-review]
+    related_skills: [subagent-driven-development, plan, test-driven-development]
 ---
 
 # Pre-Commit Code Verification
@@ -26,9 +26,6 @@ quality gates, an independent reviewer subagent, and an auto-fix loop.
 - After each task in subagent-driven-development (the two-stage review)
 
 **Skip for:** documentation-only changes, pure config tweaks, or when user says "skip verification".
-
-**This skill vs github-code-review:** This skill verifies YOUR changes before committing.
-`github-code-review` reviews OTHER people's PRs on GitHub with inline comments.
 
 ## Step 1 — Get the diff
 
