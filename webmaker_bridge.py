@@ -21,13 +21,97 @@ from run_agent import AIAgent
 
 WEBMAKER_SYSTEM_PROMPT = """You are Hermes running inside Webmaker.
 
-Build and edit complete frontend websites and apps inside the existing
-Webmaker workspace. Prefer React + TypeScript + Vite + Tailwind unless the
-current project clearly uses another frontend stack. Stay frontend-only: do
-not add backend services, auth systems, databases, server actions, or secrets.
-Work only in the current workspace. Before completion, inspect your changes
-and run an appropriate verification command when the project supports it.
+Build and edit complete frontend websites and apps inside the session workspace
+under .webmaker/workspaces/. Stay frontend-only: do not add backend services,
+auth systems, databases, or secrets. Never write to the Webmaker host app
+(webmaker/app/, webmaker/components/, etc.) — only the session workspace root.
+
+On greenfield workspaces, follow the preloaded create-new-project skill to
+scaffold the project. The workspace root is the project directory.
+
+Before completion, inspect your changes and run an appropriate verification
+command when the project supports it.
 """
+
+
+def register_repo_skills_dir() -> None:
+    """Expose bundled repo skills (e.g. create-new-project) to skill_view."""
+    repo_skills = Path(__file__).resolve().parent / "skills"
+    if not repo_skills.is_dir():
+        return
+
+    import agent.skill_utils as skill_utils
+
+    original = skill_utils.get_external_skills_dirs
+
+    def patched() -> list[Path]:
+        dirs = original()
+        resolved = repo_skills.resolve()
+        if resolved not in {d.resolve() for d in dirs}:
+            return [repo_skills, *dirs]
+        return dirs
+
+    skill_utils.get_external_skills_dirs = patched  # type: ignore[assignment]
+
+
+def _workspace_has_package_json(request: Dict[str, Any]) -> bool:
+    workspace_raw = request.get("workspaceRoot")
+    if isinstance(workspace_raw, str) and workspace_raw.strip():
+        if (Path(workspace_raw) / "package.json").is_file():
+            return True
+
+    current = request.get("currentProject")
+    if isinstance(current, dict):
+        files = current.get("files")
+        if isinstance(files, dict):
+            pkg = files.get("/package.json")
+            if isinstance(pkg, dict):
+                code = pkg.get("code")
+                if isinstance(code, str) and code.strip():
+                    return True
+
+    return False
+
+
+def is_greenfield_workspace(request: Dict[str, Any]) -> bool:
+    if request.get("greenfield") is True:
+        return True
+    return not _workspace_has_package_json(request)
+
+
+def build_webmaker_system_prompt(request: Dict[str, Any]) -> str:
+    parts = [WEBMAKER_SYSTEM_PROMPT]
+
+    if not is_greenfield_workspace(request):
+        return parts[0]
+
+    register_repo_skills_dir()
+    try:
+        from agent.skill_commands import build_preloaded_skills_prompt
+
+        skill_prompt, loaded, _missing = build_preloaded_skills_prompt(["create-new-project"])
+        if skill_prompt:
+            parts.append(skill_prompt)
+        if loaded:
+            parts.append(
+                "[MANDATORY FIRST STEP — greenfield workspace (no package.json yet): "
+                "run a terminal command to scaffold IN PLACE before reading or editing files: "
+                "npx create-next-app@latest . --yes. "
+                "Do not manually write package.json, copy template files, or create a nested subfolder. "
+                "After scaffold succeeds, continue feature work in the workspace root.]"
+            )
+        else:
+            parts.append(
+                "[Greenfield Webmaker workspace: run skill_view('create-new-project'), then "
+                "scaffold in the workspace root before building features.]"
+            )
+    except Exception:
+        parts.append(
+            "[Greenfield Webmaker workspace: scaffold in the workspace root using "
+            "create-new-project before building features.]"
+        )
+
+    return "\n\n".join(parts)
 
 
 def emit(event: Dict[str, Any]) -> None:
@@ -323,6 +407,7 @@ def main() -> int:
 
         model, model_source = configured_model(request)
         provider, provider_source = configured_provider(request)
+        system_prompt = build_webmaker_system_prompt(request)
         emit(
             {
                 "type": "activity",
@@ -350,7 +435,7 @@ def main() -> int:
             enabled_toolsets=toolsets,
             quiet_mode=True,
             platform="webmaker",
-            ephemeral_system_prompt=WEBMAKER_SYSTEM_PROMPT,
+            ephemeral_system_prompt=system_prompt,
             tool_start_callback=lambda call_id, name, args: emit(
                 activity(call_id, name, "active", "Hermes started a workspace tool.", args=args)
             ),
@@ -391,7 +476,7 @@ def main() -> int:
 
         result = agent.run_conversation(
             latest_user_message(messages),
-            system_message=WEBMAKER_SYSTEM_PROMPT,
+            system_message=system_prompt,
             conversation_history=conversation_history(messages),
             task_id=str(request.get("sessionId") or uuid.uuid4()),
         )

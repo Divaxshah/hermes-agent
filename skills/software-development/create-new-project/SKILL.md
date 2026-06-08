@@ -1,6 +1,6 @@
 ---
 name: create-new-project
-description: Use when asked to scaffold a new Next.js project and immediately work inside it. Creates the app with create-next-app, then switches context to the new project directory for follow-up work.
+description: Use when asked to scaffold a new frontend project and immediately work inside it. Creates Next.js apps with create-next-app (or in-place in Webmaker workspaces), then continues work in the project directory.
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -79,3 +79,20 @@ Do not use this skill for:
 - [ ] Current work is inside the new project directory
 - [ ] Core Next.js files exist
 - [ ] Project runs or builds successfully if requested
+
+## Webmaker workspace
+
+When running inside Webmaker, the session workspace root **is** the project directory.
+Do not create a nested subfolder and do not write to the Webmaker host app.
+
+1. Scaffold in the current directory:
+
+   ```bash
+   npx create-next-app@latest . --yes
+   ```
+
+2. Verify `package.json`, `app/` (or `pages/`), and `next.config.*` exist.
+3. Continue all feature work in the workspace root.
+4. Run `npm run build` or `npm run dev` to verify when appropriate.
+
+Webmaker syncs the scaffolded files to StackBlitz for preview after generation.
