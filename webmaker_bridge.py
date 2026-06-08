@@ -19,99 +19,75 @@ from typing import Any, Dict, Iterable, List
 from run_agent import AIAgent
 
 
+FRONTEND_DESIGN_SKILL = (
+    os.environ.get("WEBMAKER_HERMES_FRONTEND_SKILL", "").strip()
+    or "software-development/frontend-design"
+)
+
 WEBMAKER_SYSTEM_PROMPT = """You are Hermes running inside Webmaker.
 
-Build and edit complete frontend websites and apps inside the session workspace
-under .webmaker/workspaces/. Stay frontend-only: do not add backend services,
-auth systems, databases, or secrets. Never write to the Webmaker host app
-(webmaker/app/, webmaker/components/, etc.) — only the session workspace root.
+Build and edit complete frontend websites and apps inside the existing Webmaker
+workspace. The workspace already contains a React + TypeScript + Vite + Tailwind
+starter — edit and extend those files; do not run create-next-app or scaffold a
+new framework from scratch unless the user explicitly asks to replace the stack.
 
-On greenfield workspaces, follow the preloaded create-new-project skill to
-scaffold the project. The workspace root is the project directory.
+Stay frontend-only: do not add backend services, auth systems, databases, or
+secrets. Work only inside the session workspace under .webmaker/workspaces/.
+Never write to the Webmaker host app (webmaker/app/, webmaker/components/).
+
+Frontend design (mandatory): For every UI build, restyle, landing page, dashboard,
+component, or visual polish task, follow the preloaded `frontend-design` skill
+(`software-development/frontend-design`). Its aesthetics, typography, motion, and
+anti-generic-AI-slop rules override your default styling instincts. If the skill
+content is not present in context, call skill_view("software-development/frontend-design")
+before writing or editing frontend code.
 
 Before completion, inspect your changes and run an appropriate verification
 command when the project supports it.
 """
 
 
-def register_repo_skills_dir() -> None:
-    """Expose bundled repo skills (e.g. create-new-project) to skill_view."""
-    repo_skills = Path(__file__).resolve().parent / "skills"
-    if not repo_skills.is_dir():
-        return
+def _load_bundled_skill_markdown(skill_path: str) -> str:
+    """Fallback when ~/.hermes/skills does not yet contain the bundled skill."""
+    skill_md = (
+        Path(__file__).resolve().parent / "skills" / skill_path / "SKILL.md"
+    )
+    if not skill_md.is_file():
+        return ""
 
-    import agent.skill_utils as skill_utils
-
-    original = skill_utils.get_external_skills_dirs
-
-    def patched() -> list[Path]:
-        dirs = original()
-        resolved = repo_skills.resolve()
-        if resolved not in {d.resolve() for d in dirs}:
-            return [repo_skills, *dirs]
-        return dirs
-
-    skill_utils.get_external_skills_dirs = patched  # type: ignore[assignment]
+    activation_note = (
+        '[IMPORTANT: The bundled "frontend-design" skill is preloaded for this '
+        "Webmaker session. Follow its instructions for all frontend/UI work.]"
+    )
+    return f"{activation_note}\n\n{skill_md.read_text(encoding='utf-8').strip()}"
 
 
-def _workspace_has_package_json(request: Dict[str, Any]) -> bool:
-    workspace_raw = request.get("workspaceRoot")
-    if isinstance(workspace_raw, str) and workspace_raw.strip():
-        if (Path(workspace_raw) / "package.json").is_file():
-            return True
+def build_webmaker_system_prompt(session_id: str) -> tuple[str, list[str]]:
+    """Compose Webmaker system prompt with the frontend-design skill preloaded."""
+    from agent.skill_commands import build_preloaded_skills_prompt
 
-    current = request.get("currentProject")
-    if isinstance(current, dict):
-        files = current.get("files")
-        if isinstance(files, dict):
-            pkg = files.get("/package.json")
-            if isinstance(pkg, dict):
-                code = pkg.get("code")
-                if isinstance(code, str) and code.strip():
-                    return True
+    parts = [WEBMAKER_SYSTEM_PROMPT.strip()]
+    loaded_names: list[str] = []
 
-    return False
-
-
-def is_greenfield_workspace(request: Dict[str, Any]) -> bool:
-    if request.get("greenfield") is True:
-        return True
-    return not _workspace_has_package_json(request)
-
-
-def build_webmaker_system_prompt(request: Dict[str, Any]) -> str:
-    parts = [WEBMAKER_SYSTEM_PROMPT]
-
-    if not is_greenfield_workspace(request):
-        return parts[0]
-
-    register_repo_skills_dir()
-    try:
-        from agent.skill_commands import build_preloaded_skills_prompt
-
-        skill_prompt, loaded, _missing = build_preloaded_skills_prompt(["create-new-project"])
-        if skill_prompt:
-            parts.append(skill_prompt)
-        if loaded:
-            parts.append(
-                "[MANDATORY FIRST STEP — greenfield workspace (no package.json yet): "
-                "run a terminal command to scaffold IN PLACE before reading or editing files: "
-                "npx create-next-app@latest . --yes. "
-                "Do not manually write package.json, copy template files, or create a nested subfolder. "
-                "After scaffold succeeds, continue feature work in the workspace root.]"
-            )
+    skills_prompt, loaded, missing = build_preloaded_skills_prompt(
+        [FRONTEND_DESIGN_SKILL],
+        task_id=session_id,
+    )
+    if skills_prompt:
+        parts.append(skills_prompt)
+        loaded_names.extend(loaded)
+    elif missing:
+        bundled = _load_bundled_skill_markdown(FRONTEND_DESIGN_SKILL)
+        if bundled:
+            parts.append(bundled)
+            loaded_names.append("frontend-design (bundled)")
         else:
             parts.append(
-                "[Greenfield Webmaker workspace: run skill_view('create-new-project'), then "
-                "scaffold in the workspace root before building features.]"
+                "CRITICAL: The frontend-design skill could not be preloaded. "
+                f'Run skill_view("{FRONTEND_DESIGN_SKILL}") before any UI work.'
             )
-    except Exception:
-        parts.append(
-            "[Greenfield Webmaker workspace: scaffold in the workspace root using "
-            "create-new-project before building features.]"
-        )
 
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), loaded_names
 
 
 def emit(event: Dict[str, Any]) -> None:
@@ -330,7 +306,7 @@ class ReasoningEmitter:
             return
         self.parts.append(chunk)
         current = self.text()
-        if len(current) - self.last_emitted_len >= 600:
+        if len(current) - self.last_emitted_len >= 80:
             self.emit("active")
 
     def text(self) -> str:
@@ -341,7 +317,7 @@ class ReasoningEmitter:
         if not text:
             return
         self.last_emitted_len = len(text)
-        detail = "Reasoned." if status == "completed" else compact_text(text[-800:], 800)
+        detail = "Reasoned." if status == "completed" else compact_text(text[-480:], 480)
         emit(
             {
                 "type": "activity",
@@ -407,7 +383,6 @@ def main() -> int:
 
         model, model_source = configured_model(request)
         provider, provider_source = configured_provider(request)
-        system_prompt = build_webmaker_system_prompt(request)
         emit(
             {
                 "type": "activity",
@@ -426,12 +401,34 @@ def main() -> int:
             }
         )
 
+        session_id = str(request.get("sessionId") or uuid.uuid4())
+        system_prompt, loaded_skills = build_webmaker_system_prompt(session_id)
+        if loaded_skills:
+            emit(
+                {
+                    "type": "activity",
+                    "activity": {
+                        "id": "hermes-frontend-skill",
+                        "kind": "inspect",
+                        "status": "completed",
+                        "title": "Frontend design skill",
+                        "detail": (
+                            "Preloaded Hermes skill(s) for UI work: "
+                            + ", ".join(loaded_skills)
+                            + "."
+                        ),
+                        "tool": "hermes.skill",
+                        "targets": [FRONTEND_DESIGN_SKILL],
+                    },
+                }
+            )
+
         toolsets = ["webmaker"]
         reasoning = ReasoningEmitter()
         agent = AIAgent(
             model=model,
             provider=provider or None,
-            session_id=str(request.get("sessionId") or uuid.uuid4()),
+            session_id=session_id,
             enabled_toolsets=toolsets,
             quiet_mode=True,
             platform="webmaker",
@@ -478,7 +475,7 @@ def main() -> int:
             latest_user_message(messages),
             system_message=system_prompt,
             conversation_history=conversation_history(messages),
-            task_id=str(request.get("sessionId") or uuid.uuid4()),
+            task_id=session_id,
         )
         reasoning.emit("completed")
         summary = result.get("final_response") if isinstance(result, dict) else str(result)
