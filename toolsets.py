@@ -21,6 +21,7 @@ CLI_ONLY_TOOLSETS = frozenset({
     "debugging",
     "hermes-cli",
     "hermes-api-server",
+    "webmaker",
 })
 
 # Shared tool list for the interactive CLI.
@@ -98,6 +99,26 @@ TOOLSETS = {
     "hermes-cli": {
         "description": "Full interactive CLI toolset for software development",
         "tools": _HERMES_CORE_TOOLS,
+        "includes": [],
+    },
+    "webmaker": {
+        "description": "Headless frontend Webmaker workspace tools",
+        "tools": [
+            "web_search",
+            "web_extract",
+            "terminal",
+            "process",
+            "read_file",
+            "write_file",
+            "patch",
+            "search_files",
+            "vision_analyze",
+            "skills_list",
+            "skill_view",
+            "skill_manage",
+            "todo",
+            "execute_code",
+        ] + (["delegate_task"] if __import__("os").environ.get("WEBMAKER_HERMES_ENABLE_DELEGATION") == "1" else []),
         "includes": [],
     },
 }

@@ -37,6 +37,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import time
 import threading
 import atexit
@@ -48,6 +49,22 @@ from typing import Optional, Dict, Any, List
 from utils import env_var_enabled
 
 logger = logging.getLogger(__name__)
+
+_WEBMAKER_ALLOWED_COMMANDS = {
+    ("npm", "install"),
+    ("npm", "run", "build"),
+    ("npm", "run", "dev"),
+    ("npm", "test"),
+    ("npm", "run", "lint"),
+}
+
+
+def _webmaker_command_allowed(command: str) -> bool:
+    try:
+        parts = tuple(shlex.split(command))
+    except ValueError:
+        return False
+    return parts in _WEBMAKER_ALLOWED_COMMANDS
 
 
 # ---------------------------------------------------------------------------
@@ -1823,6 +1840,14 @@ def terminal_tool(
                 "output": "",
                 "exit_code": -1,
                 "error": f"Invalid command: expected string, got {type(command).__name__}",
+                "status": "error",
+            }, ensure_ascii=False)
+
+        if os.environ.get("WEBMAKER_HERMES_TERMINAL_POLICY") == "1" and not _webmaker_command_allowed(command):
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": "Webmaker Hermes mode only allows npm install, npm run build, npm run dev, npm test, and npm run lint.",
                 "status": "error",
             }, ensure_ascii=False)
 
