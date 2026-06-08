@@ -54,24 +54,14 @@ from hermes_cli.cli_output import (  # noqa: E402 — late import block
 # These map to keys in toolsets.py TOOLSETS dict.
 CONFIGURABLE_TOOLSETS = [
     ("web",             "🔍 Web Search & Scraping",    "web_search, web_extract"),
-    ("browser",         "🌐 Browser Automation",       "navigate, click, type, scroll"),
     ("terminal",        "💻 Terminal & Processes",      "terminal, process"),
     ("file",            "📁 File Operations",           "read, write, patch, search"),
     ("code_execution",  "⚡ Code Execution",            "execute_code"),
     ("vision",          "👁️  Vision / Image Analysis",  "vision_analyze"),
-    ("video",           "🎬 Video Analysis",            "video_analyze (requires video-capable model)"),
-    ("x_search",        "🐦 X (Twitter) Search",        "x_search (requires xAI OAuth or XAI_API_KEY)"),
-    ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
-    ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
     ("skills",          "📚 Skills",                    "list, view, manage"),
     ("todo",            "📋 Task Planning",             "todo"),
-    ("memory",          "💾 Memory",                    "persistent memory across sessions"),
-    ("context_engine",  "🧩 Context Engine",            "runtime tools from the active context engine"),
-    ("session_search",  "🔎 Session Search",            "search past conversations"),
-    ("clarify",         "❓ Clarifying Questions",      "clarify"),
     ("delegation",      "👥 Task Delegation",           "delegate_task"),
-    ("cronjob",         "⏰ Cron Jobs",                 "create/list/update/pause/resume/run, with optional attached skills"),
-    ("computer_use",     "🖱️  Computer Use (macOS)",     "background desktop control via cua-driver"),
+    ("debugging",       "🐛 Debugging",                 "terminal + web + file"),
 ]
 
 
@@ -99,7 +89,7 @@ def gui_toolset_label(label: str) -> str:
 # set. The `hermes tools` → X (Twitter) Search setup walks users through
 # credential setup. The tool's check_fn means the schema still won't
 # appear to the model if the credential later goes missing or expires.
-_DEFAULT_OFF_TOOLSETS = {"moa", "video", "x_search"}
+_DEFAULT_OFF_TOOLSETS: set = set()
 
 
 def _xai_credentials_present() -> bool:
@@ -150,39 +140,13 @@ def _toolset_allowed_for_platform(ts_key: str, platform: str) -> bool:
 
 
 def _get_effective_configurable_toolsets():
-    """Return CONFIGURABLE_TOOLSETS + any plugin-provided toolsets.
-
-    Plugin toolsets are appended at the end so they appear after the
-    built-in toolsets in the TUI checklist. A plugin whose toolset key
-    already appears in ``CONFIGURABLE_TOOLSETS`` is skipped — bundled
-    plugins (e.g. ``plugins/spotify``) share their toolset key with the
-    built-in entry, and we want the built-in label/description to win.
-    Without the dedupe, ``hermes tools`` → "reconfigure existing" would
-    list the same toolset twice.
-    """
-    result = list(CONFIGURABLE_TOOLSETS)
-    seen = {ts_key for ts_key, _, _ in result}
-    try:
-        from hermes_cli.plugins import discover_plugins, get_plugin_toolsets
-        discover_plugins()  # idempotent — ensures plugins are loaded
-        for entry in get_plugin_toolsets():
-            if entry[0] in seen:
-                continue
-            seen.add(entry[0])
-            result.append(entry)
-    except Exception:
-        pass
-    return result
+    """Return CONFIGURABLE_TOOLSETS for the CLI-only build."""
+    return list(CONFIGURABLE_TOOLSETS)
 
 
 def _get_plugin_toolset_keys() -> set:
-    """Return the set of toolset keys provided by plugins."""
-    try:
-        from hermes_cli.plugins import discover_plugins, get_plugin_toolsets
-        discover_plugins()  # idempotent — ensures plugins are loaded
-        return {ts_key for ts_key, _, _ in get_plugin_toolsets()}
-    except Exception:
-        return set()
+    """Return the set of toolset keys provided by plugins (none in CLI-only build)."""
+    return set()
 
 
 def _checklist_toolset_keys(platform: str) -> Set[str]:
@@ -1352,9 +1316,6 @@ def _get_platform_tools(
         and isinstance(platform_toolsets.get(platform), list)
         and not toolset_names
     )
-    if context_engine_name and context_engine_name != "compressor" and not explicit_empty_selection:
-        enabled_toolsets.add("context_engine")
-
     # Preserve any explicit non-configurable toolset entries (for example,
     # custom toolsets or MCP server names saved in platform_toolsets).
     explicit_passthrough = {
@@ -1400,6 +1361,10 @@ def _get_platform_tools(
     if disabled_toolsets:
         disabled_set = {str(ts) for ts in disabled_toolsets}
         enabled_toolsets -= disabled_set
+
+    from toolsets import CLI_ONLY_TOOLSETS
+
+    enabled_toolsets = {ts for ts in enabled_toolsets if ts in CLI_ONLY_TOOLSETS}
 
     return enabled_toolsets
 

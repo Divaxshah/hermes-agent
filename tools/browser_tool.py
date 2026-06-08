@@ -93,15 +93,18 @@ from agent.browser_provider import BrowserProvider as CloudBrowserProvider  # no
 from agent.browser_registry import (  # noqa: F401  (test-patchable surface)
     get_provider as _registry_get_browser_provider,
 )
-from plugins.browser.browserbase.provider import (  # noqa: F401  (legacy import surface)
-    BrowserbaseBrowserProvider as BrowserbaseProvider,
-)
-from plugins.browser.browser_use.provider import (  # noqa: F401
-    BrowserUseBrowserProvider as BrowserUseProvider,
-)
-from plugins.browser.firecrawl.provider import (  # noqa: F401
-    FirecrawlBrowserProvider as FirecrawlProvider,
-)
+try:
+    from plugins.browser.browserbase.provider import (  # noqa: F401
+        BrowserbaseBrowserProvider as BrowserbaseProvider,
+    )
+    from plugins.browser.browser_use.provider import (  # noqa: F401
+        BrowserUseBrowserProvider as BrowserUseProvider,
+    )
+    from plugins.browser.firecrawl.provider import (  # noqa: F401
+        FirecrawlBrowserProvider as FirecrawlProvider,
+    )
+except ModuleNotFoundError:
+    BrowserbaseProvider = BrowserUseProvider = FirecrawlProvider = None  # type: ignore
 from tools.tool_backend_helpers import normalize_browser_cloud_provider
 # Camofox local anti-detection browser backend (optional).
 # When CAMOFOX_URL is set, all browser operations route through the

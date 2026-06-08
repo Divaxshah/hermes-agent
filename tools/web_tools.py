@@ -50,29 +50,67 @@ import httpx  # noqa: F401 — kept at module top so tests can patch tools.web_t
 # surface stays stable.
 if TYPE_CHECKING:
     from firecrawl import Firecrawl  # noqa: F401 — type hints only
-from plugins.web.firecrawl.provider import (
-    Firecrawl,  # noqa: F401  # re-exported for tests that mock.patch("tools.web_tools.Firecrawl")
-    _firecrawl_backend_help_suffix,
-    _get_firecrawl_client,  # noqa: F401  # re-exported for tests that `from tools.web_tools import _get_firecrawl_client`
-    _get_firecrawl_gateway_url,
-    _is_tool_gateway_ready,
-    check_firecrawl_api_key,
-)
-# Tavily helpers re-exported for backward-compat with existing unit tests
-# (tests/tools/test_web_tools_tavily.py imports these names directly).
-from plugins.web.tavily.provider import (  # noqa: F401 — backward-compat names
-    _normalize_tavily_documents,
-    _normalize_tavily_search_results,
-    _tavily_request,
-)
-# Parallel + Exa clients re-exported for backward-compat with existing
-# unit tests (tests/tools/test_web_tools_config.py imports _get_parallel_client
-# / _get_async_parallel_client / _get_exa_client directly).
-from plugins.web.parallel.provider import (  # noqa: F401 — backward-compat names
-    _get_async_parallel_client,
-    _get_parallel_client,
-)
-from plugins.web.exa.provider import _get_exa_client  # noqa: F401
+
+try:
+    from plugins.web.firecrawl.provider import (
+        Firecrawl,  # noqa: F401
+        _firecrawl_backend_help_suffix,
+        _get_firecrawl_client,  # noqa: F401
+        _get_firecrawl_gateway_url,
+        _is_tool_gateway_ready,
+        check_firecrawl_api_key,
+    )
+except ModuleNotFoundError:
+    Firecrawl = None  # type: ignore
+
+    def _firecrawl_backend_help_suffix() -> str:
+        return ""
+
+    def _get_firecrawl_client(*_a, **_k):
+        return None
+
+    def _get_firecrawl_gateway_url() -> str:
+        return ""
+
+    def _is_tool_gateway_ready(*_a, **_k) -> bool:
+        return False
+
+    def check_firecrawl_api_key() -> bool:
+        return False
+
+try:
+    from plugins.web.tavily.provider import (  # noqa: F401
+        _normalize_tavily_documents,
+        _normalize_tavily_search_results,
+        _tavily_request,
+    )
+except ModuleNotFoundError:
+    def _normalize_tavily_documents(docs):
+        return docs
+
+    def _normalize_tavily_search_results(results):
+        return results
+
+    def _tavily_request(*_a, **_k):
+        return {"success": False, "error": "Tavily provider not installed"}
+
+try:
+    from plugins.web.parallel.provider import (  # noqa: F401
+        _get_async_parallel_client,
+        _get_parallel_client,
+    )
+except ModuleNotFoundError:
+    def _get_async_parallel_client():
+        return None
+
+    def _get_parallel_client():
+        return None
+
+try:
+    from plugins.web.exa.provider import _get_exa_client  # noqa: F401
+except ModuleNotFoundError:
+    def _get_exa_client():
+        return None
 
 # Module-level cache slots for the per-vendor clients. The plugins read/write
 # these via tools.web_tools so unit tests that reset

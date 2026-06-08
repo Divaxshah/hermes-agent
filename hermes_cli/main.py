@@ -1908,8 +1908,6 @@ def cmd_chat(args):
     if getattr(args, "source", None):
         os.environ["HERMES_SESSION_SOURCE"] = args.source
 
-    _pin_kanban_board_env()
-
     if use_tui:
         _launch_tui(
             getattr(args, "resume", None),

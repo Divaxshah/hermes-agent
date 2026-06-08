@@ -879,9 +879,12 @@ def set_secret_capture_callback(*args, **kwargs):
 
 
 def _cleanup_all_browsers(*args, **kwargs):
-    from tools.browser_tool import _emergency_cleanup_all_sessions
+    try:
+        from tools.browser_tool import _emergency_cleanup_all_sessions
 
-    return _emergency_cleanup_all_sessions(*args, **kwargs)
+        return _emergency_cleanup_all_sessions(*args, **kwargs)
+    except Exception:
+        return None
 
 # Guard to prevent cleanup from running multiple times on exit
 _cleanup_done = False

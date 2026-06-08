@@ -200,6 +200,75 @@ def _compute_relative_dest(skill_dir: Path, bundled_dir: Path) -> Path:
     return SKILLS_DIR / rel
 
 
+def _prune_unbundled_skill_dirs(
+    bundled_dir: Path,
+    bundled_skills: List[Tuple[str, Path]],
+    *,
+    quiet: bool = False,
+) -> List[str]:
+    """Delete stale skill copies under ``~/.hermes/skills/``.
+
+    The CLI-only build ships a small bundled set. Copies from the full Hermes
+    install (optional-skills seeding, old syncs) are left on disk unless removed
+    here. Hub-installed skills and user-modified bundled copies are kept.
+    """
+    if not SKILLS_DIR.exists():
+        return []
+
+    allowed_dests = {
+        _compute_relative_dest(skill_dir, bundled_dir).resolve()
+        for _, skill_dir in bundled_skills
+    }
+    manifest = _read_manifest()
+
+    try:
+        from tools.skill_usage import _read_hub_installed_names
+
+        hub_names = _read_hub_installed_names()
+    except Exception:
+        hub_names = set()
+
+    pruned: List[str] = []
+    for skill_md in sorted(SKILLS_DIR.rglob("SKILL.md")):
+        if is_excluded_skill_path(skill_md):
+            continue
+        skill_dir = skill_md.parent
+        try:
+            skill_dir.resolve().relative_to(SKILLS_DIR.resolve())
+        except ValueError:
+            continue
+        if skill_dir.resolve() in allowed_dests:
+            continue
+
+        name = _read_skill_name(skill_md, skill_dir.name)
+        if name in hub_names:
+            continue
+
+        origin_hash = manifest.get(name, "")
+        if origin_hash and _dir_hash(skill_dir) != origin_hash:
+            continue
+
+        try:
+            _rmtree_writable(skill_dir)
+            pruned.append(name)
+            if not quiet:
+                print(f"  − {name} (removed stale skill)")
+        except (OSError, IOError) as exc:
+            if not quiet:
+                print(f"  ! Failed to remove {name}: {exc}")
+
+    for category_dir in sorted(SKILLS_DIR.iterdir()):
+        if not category_dir.is_dir() or category_dir.name.startswith("."):
+            continue
+        try:
+            if not any(category_dir.rglob("SKILL.md")):
+                _rmtree_writable(category_dir)
+        except (OSError, IOError):
+            pass
+
+    return pruned
+
+
 def _dir_hash(directory: Path) -> str:
     """Compute a hash of all file contents in a directory for change detection."""
     hasher = hashlib.md5()
@@ -614,6 +683,7 @@ def sync_skills(quiet: bool = False) -> dict:
 
     _write_manifest(manifest)
     optional_provenance_backfilled = _backfill_optional_provenance(quiet=quiet)
+    pruned = _prune_unbundled_skill_dirs(bundled_dir, bundled_skills, quiet=quiet)
 
     return {
         "copied": copied,
@@ -622,6 +692,7 @@ def sync_skills(quiet: bool = False) -> dict:
         "user_modified": user_modified,
         "cleaned": cleaned,
         "suppressed": suppressed_skipped,
+        "pruned": pruned,
         "total_bundled": len(bundled_skills),
         "optional_provenance_backfilled": optional_provenance_backfilled,
     }

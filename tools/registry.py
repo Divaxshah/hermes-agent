@@ -25,6 +25,23 @@ from typing import Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# CLI-only build: do not import tool modules outside the allowed toolsets.
+_CLI_ONLY_SKIP_TOOL_MODULES = frozenset({
+    "browser_tool",
+    "browser_cdp_tool",
+    "browser_dialog_tool",
+    "browser_supervisor",
+    "browser_camofox",
+    "browser_camofox_state",
+    "clarify_tool",
+    "computer_use_tool",
+    "memory_tool",
+    "mixture_of_agents_tool",
+    "session_search_tool",
+    "tts_tool",
+    "x_search_tool",
+})
+
 
 def _is_registry_register_call(node: ast.AST) -> bool:
     """Return True when *node* is a ``registry.register(...)`` call expression."""
@@ -61,6 +78,7 @@ def discover_builtin_tools(tools_dir: Optional[Path] = None) -> List[str]:
         f"tools.{path.stem}"
         for path in sorted(tools_path.glob("*.py"))
         if path.name not in {"__init__.py", "registry.py", "mcp_tool.py"}
+        and path.stem not in _CLI_ONLY_SKIP_TOOL_MODULES
         and _module_registers_tools(path)
     ]
 
@@ -520,12 +538,16 @@ class ToolRegistry:
 
     def check_tool_availability(self, quiet: bool = False):
         """Return (available_toolsets, unavailable_info) like the old function."""
+        from toolsets import CLI_ONLY_TOOLSETS
+
         available = []
         unavailable = []
         seen = set()
         entries, toolset_checks = self._snapshot_state()
         for entry in entries:
             ts = entry.toolset
+            if ts not in CLI_ONLY_TOOLSETS:
+                continue
             if ts in seen:
                 continue
             seen.add(ts)

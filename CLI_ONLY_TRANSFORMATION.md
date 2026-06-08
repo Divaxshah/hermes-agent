@@ -76,7 +76,9 @@ Removed surfaces: web dashboard, TUI (`--tui`), Electron GUI, cron, ACP editor b
 
 ## Skills (kept)
 
-**Bundled:** `skills/software-development/` — plan, TDD, debugging, patch, spike, debuggers, skill-authoring.
+**Bundled:** `skills/software-development/` — plan, TDD, debugging, patch, spike, debuggers, skill-authoring (9 skills).
+
+**Stale copies:** `~/.hermes/skills/` may still list 80+ skills from a prior full install. `sync_skills()` now prunes directories that are not in the current bundled set on every `hermes chat` startup.
 
 ---
 
@@ -110,6 +112,14 @@ Removed surfaces: web dashboard, TUI (`--tui`), Electron GUI, cron, ACP editor b
 - `hermes-cron`, `hermes-acp` toolsets
 - Messaging tools (earlier pass)
 
+## Toolsets (kept for CLI)
+
+`web`, `terminal`, `file`, `code_execution`, `vision`, `skills`, `todo`, `delegation`, `debugging`, plus composites `hermes-cli` and `hermes-api-server`.
+
+Removed from picker/defaults: browser, clarify, computer_use, memory, moa, session_search, tts, video, x_search, context_engine, and plugin toolsets (e.g. `browser-cdp`). Their tool modules are skipped at discovery so agent init no longer imports `plugins.browser`.
+
+**Web search:** only `plugins/web/brave_free/` remains — set `BRAVE_SEARCH_API_KEY` in `~/.hermes/.env` (or configure another backend via `hermes setup tools`) for `web_search` / `web_extract` to appear.
+
 ---
 
 ## Dependencies trimmed (`pyproject.toml`)
@@ -120,7 +130,7 @@ Removed surfaces: web dashboard, TUI (`--tui`), Electron GUI, cron, ACP editor b
 
 ## Optional follow-ups
 
-- Trim `hermes_cli/auth.py` `PROVIDER_REGISTRY` to four providers only (plugin dirs already pruned).
+- ~~Trim `hermes_cli/auth.py` `PROVIDER_REGISTRY` and `hermes_cli/models.py` `CANONICAL_PROVIDERS` to four providers~~ (done — setup/`hermes model` now show OpenRouter, Anthropic, OpenAI, Gemini only).
 - Remove `batch_runner.py`, `mcp_serve.py`, `mini_swe_runner.py` if batch/MCP-serve modes are unused.
 - Remove `mcp` CLI if you do not need MCP tool servers.
 - Simplify `hermes_cli/memory_setup.py` to built-in-only flows.

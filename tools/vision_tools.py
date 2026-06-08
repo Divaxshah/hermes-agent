@@ -1580,12 +1580,18 @@ def _handle_video_analyze(args: Dict[str, Any], **kw: Any) -> Awaitable[str]:
     return video_analyze_tool(video_url, full_prompt, model)
 
 
-registry.register(
-    name="video_analyze",
-    toolset="video",
-    schema=VIDEO_ANALYZE_SCHEMA,
-    handler=_handle_video_analyze,
-    check_fn=check_vision_requirements,
-    is_async=True,
-    emoji="🎬",
-)
+try:
+    from toolsets import CLI_ONLY_TOOLSETS as _CLI_ONLY_TOOLSETS
+except Exception:
+    _CLI_ONLY_TOOLSETS = frozenset()
+
+if "video" in _CLI_ONLY_TOOLSETS:
+    registry.register(
+        name="video_analyze",
+        toolset="video",
+        schema=VIDEO_ANALYZE_SCHEMA,
+        handler=_handle_video_analyze,
+        check_fn=check_vision_requirements,
+        is_async=True,
+        emoji="🎬",
+    )

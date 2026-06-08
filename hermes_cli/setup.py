@@ -223,9 +223,15 @@ def _sanitize_pasted_input(value: str) -> str:
 
 
 def _curses_prompt_choice(question: str, choices: list, default: int = 0, description: str | None = None) -> int:
-    """Single-select menu using curses. Delegates to curses_radiolist."""
-    from hermes_cli.curses_ui import curses_radiolist
-    return curses_radiolist(question, choices, selected=default, cancel_returns=-1, description=description)
+    """Single-select menu. Uses text prompts in the CLI-only build."""
+    try:
+        from hermes_cli.curses_ui import curses_radiolist
+
+        return curses_radiolist(
+            question, choices, selected=default, cancel_returns=-1, description=description
+        )
+    except Exception:
+        return -1
 
 
 
@@ -314,15 +320,18 @@ def prompt_checklist(title: str, items: list, pre_selected: list = None) -> list
     if pre_selected is None:
         pre_selected = []
 
-    from hermes_cli.curses_ui import curses_checklist
+    try:
+        from hermes_cli.curses_ui import curses_checklist
 
-    chosen = curses_checklist(
-        title,
-        items,
-        set(pre_selected),
-        cancel_returns=set(pre_selected),
-    )
-    return sorted(chosen)
+        chosen = curses_checklist(
+            title,
+            items,
+            set(pre_selected),
+            cancel_returns=set(pre_selected),
+        )
+        return sorted(chosen)
+    except Exception:
+        return sorted(pre_selected)
 
 
 def _prompt_api_key(var: dict):
@@ -1078,301 +1087,16 @@ def setup_tts(config: dict):
 
 
 def setup_terminal_backend(config: dict):
-    """Configure the terminal execution backend."""
-    import platform as _platform
+    """Configure the terminal execution backend (CLI-only build: local only)."""
     print_header("Terminal Backend")
-    print_info("Choose where Hermes runs shell commands and code.")
-    print_info("This affects tool execution, file access, and isolation.")
-    print_info(f"   Guide: {_DOCS_BASE}/developer-guide/environments")
+    print_info("Commands run directly on this machine (local backend).")
     print()
 
-    current_backend = cfg_get(config, "terminal", "backend", default="local")
-    is_linux = _platform.system() == "Linux"
-
-    # Build backend choices with descriptions
-    terminal_choices = [
-        "Local - run directly on this machine (default)",
-        "Docker - isolated container with configurable resources",
-        "Modal - serverless cloud sandbox",
-        "SSH - run on a remote machine",
-        "Daytona - persistent cloud development environment",
-    ]
-    idx_to_backend = {0: "local", 1: "docker", 2: "modal", 3: "ssh", 4: "daytona"}
-    backend_to_idx = {"local": 0, "docker": 1, "modal": 2, "ssh": 3, "daytona": 4}
-
-    next_idx = 5
-    if is_linux:
-        terminal_choices.append("Singularity/Apptainer - HPC-friendly container")
-        idx_to_backend[next_idx] = "singularity"
-        backend_to_idx["singularity"] = next_idx
-        next_idx += 1
-
-    # Add keep current option
-    keep_current_idx = next_idx
-    terminal_choices.append(f"Keep current ({current_backend})")
-    idx_to_backend[keep_current_idx] = current_backend
-
-    terminal_idx = prompt_choice(
-        "Select terminal backend:", terminal_choices, keep_current_idx
-    )
-
-    selected_backend = idx_to_backend.get(terminal_idx)
-
-    if terminal_idx == keep_current_idx:
-        print_info(f"Keeping current backend: {current_backend}")
-        return
-
-    config.setdefault("terminal", {})["backend"] = selected_backend
-
-    if selected_backend == "local":
-        print_success("Terminal backend: Local")
-        print_info("Commands run directly on this machine.")
-        # Gateway working directory defaults to home; sudo stays off. Both are
-        # configurable later via `hermes setup terminal` / config.yaml.
-        config["terminal"].setdefault("cwd", str(Path.home()))
-
-    elif selected_backend == "docker":
-        print_success("Terminal backend: Docker")
-
-        # Check if Docker is available
-        docker_bin = shutil.which("docker")
-        if not docker_bin:
-            print_warning("Docker not found in PATH!")
-            print_info("Install Docker: https://docs.docker.com/get-docker/")
-        else:
-            print_info(f"Docker found: {docker_bin}")
-
-        # Image and resource limits use defaults; tune via `hermes setup terminal`.
-        config["terminal"].setdefault(
-            "docker_image", "nikolaik/python-nodejs:python3.11-nodejs20"
-        )
-
-    elif selected_backend == "singularity":
-        print_success("Terminal backend: Singularity/Apptainer")
-
-        # Check if singularity/apptainer is available
-        sing_bin = shutil.which("apptainer") or shutil.which("singularity")
-        if not sing_bin:
-            print_warning("Singularity/Apptainer not found in PATH!")
-            print_info(
-                "Install: https://apptainer.org/docs/admin/main/installation.html"
-            )
-        else:
-            print_info(f"Found: {sing_bin}")
-
-        # Image and resource limits use defaults; tune via `hermes setup terminal`.
-        config["terminal"].setdefault(
-            "singularity_image",
-            "docker://nikolaik/python-nodejs:python3.11-nodejs20",
-        )
-
-    elif selected_backend == "modal":
-        print_success("Terminal backend: Modal")
-        print_info("Serverless cloud sandboxes. Each session gets its own container.")
-        from tools.managed_tool_gateway import is_managed_tool_gateway_ready
-        from tools.tool_backend_helpers import normalize_modal_mode
-
-        managed_modal_available = bool(
-            managed_nous_tools_enabled()
-            and
-            get_nous_subscription_features(config).nous_auth_present
-            and is_managed_tool_gateway_ready("modal")
-        )
-        modal_mode = normalize_modal_mode(cfg_get(config, "terminal", "modal_mode"))
-        use_managed_modal = False
-        if managed_modal_available:
-            modal_choices = [
-                "Use my Nous subscription",
-                "Use my own Modal account",
-            ]
-            if modal_mode == "managed":
-                default_modal_idx = 0
-            elif modal_mode == "direct":
-                default_modal_idx = 1
-            else:
-                default_modal_idx = 1 if get_env_value("MODAL_TOKEN_ID") else 0
-            modal_mode_idx = prompt_choice(
-                "Select how Modal execution should be billed:",
-                modal_choices,
-                default_modal_idx,
-            )
-            use_managed_modal = modal_mode_idx == 0
-
-        if use_managed_modal:
-            config["terminal"]["modal_mode"] = "managed"
-            print_info("Modal execution will use the managed Nous gateway and bill to your subscription.")
-            if get_env_value("MODAL_TOKEN_ID") or get_env_value("MODAL_TOKEN_SECRET"):
-                print_info(
-                    "Direct Modal credentials are still configured, but this backend is pinned to managed mode."
-                )
-        else:
-            config["terminal"]["modal_mode"] = "direct"
-            print_info("Requires a Modal account: https://modal.com")
-
-            # Check if modal SDK is installed
-            try:
-                __import__("modal")
-            except ImportError:
-                print_info("Installing modal SDK...")
-                import subprocess
-
-                uv_bin = shutil.which("uv")
-                if uv_bin:
-                    result = subprocess.run(
-                        [
-                            uv_bin,
-                            "pip",
-                            "install",
-                            "--python",
-                            sys.executable,
-                            "modal",
-                        ],
-                        capture_output=True,
-                        text=True,
-                    )
-                else:
-                    result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "modal"],
-                        capture_output=True,
-                        text=True,
-                    )
-                if result.returncode == 0:
-                    print_success("modal SDK installed")
-                else:
-                    print_warning("Install failed — run manually: pip install modal")
-
-            # Modal token
-            print()
-            print_info("Modal authentication:")
-            print_info("  Get your token at: https://modal.com/settings")
-            existing_token = get_env_value("MODAL_TOKEN_ID")
-            if existing_token:
-                print_info("  Modal token: already configured")
-                if prompt_yes_no("  Update Modal credentials?", False):
-                    token_id = prompt("    Modal Token ID", password=True)
-                    token_secret = prompt("    Modal Token Secret", password=True)
-                    if token_id:
-                        save_env_value("MODAL_TOKEN_ID", token_id)
-                    if token_secret:
-                        save_env_value("MODAL_TOKEN_SECRET", token_secret)
-            else:
-                token_id = prompt("    Modal Token ID", password=True)
-                token_secret = prompt("    Modal Token Secret", password=True)
-                if token_id:
-                    save_env_value("MODAL_TOKEN_ID", token_id)
-                if token_secret:
-                    save_env_value("MODAL_TOKEN_SECRET", token_secret)
-
-    elif selected_backend == "daytona":
-        print_success("Terminal backend: Daytona")
-        print_info("Persistent cloud development environments.")
-        print_info("Each session gets a dedicated sandbox with filesystem persistence.")
-        print_info("Sign up at: https://daytona.io")
-
-        # Check if daytona SDK is installed
-        try:
-            __import__("daytona")
-        except ImportError:
-            print_info("Installing daytona SDK...")
-            import subprocess
-
-            uv_bin = shutil.which("uv")
-            if uv_bin:
-                result = subprocess.run(
-                    [uv_bin, "pip", "install", "--python", sys.executable, "daytona"],
-                    capture_output=True,
-                    text=True,
-                )
-            else:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "daytona"],
-                    capture_output=True,
-                    text=True,
-                )
-            if result.returncode == 0:
-                print_success("daytona SDK installed")
-            else:
-                print_warning("Install failed — run manually: pip install daytona")
-                if result.stderr:
-                    print_info(f"  Error: {result.stderr.strip().splitlines()[-1]}")
-
-        # Daytona API key
-        print()
-        existing_key = get_env_value("DAYTONA_API_KEY")
-        if existing_key:
-            print_info("  Daytona API key: already configured")
-            if prompt_yes_no("  Update API key?", False):
-                api_key = prompt("    Daytona API key", password=True)
-                if api_key:
-                    save_env_value("DAYTONA_API_KEY", api_key)
-                    print_success("    Updated")
-        else:
-            api_key = prompt("    Daytona API key", password=True)
-            if api_key:
-                save_env_value("DAYTONA_API_KEY", api_key)
-                print_success("    Configured")
-
-        # Image and resource limits use defaults; tune via `hermes setup terminal`.
-        config["terminal"].setdefault(
-            "daytona_image", "nikolaik/python-nodejs:python3.11-nodejs20"
-        )
-
-    elif selected_backend == "ssh":
-        print_success("Terminal backend: SSH")
-        print_info("Run commands on a remote machine via SSH.")
-
-        # SSH host
-        current_host = get_env_value("TERMINAL_SSH_HOST") or ""
-        host = prompt("  SSH host (hostname or IP)", current_host)
-        if host:
-            save_env_value("TERMINAL_SSH_HOST", host)
-
-        # SSH user
-        current_user = get_env_value("TERMINAL_SSH_USER") or ""
-        user = prompt("  SSH user", current_user or os.getenv("USER", ""))
-        if user:
-            save_env_value("TERMINAL_SSH_USER", user)
-
-        # SSH port
-        current_port = get_env_value("TERMINAL_SSH_PORT") or "22"
-        port = prompt("  SSH port", current_port)
-        if port and port != "22":
-            save_env_value("TERMINAL_SSH_PORT", port)
-
-        # SSH key
-        current_key = get_env_value("TERMINAL_SSH_KEY") or ""
-        default_key = str(Path.home() / ".ssh" / "id_rsa")
-        ssh_key = prompt("  SSH private key path", current_key or default_key)
-        if ssh_key:
-            save_env_value("TERMINAL_SSH_KEY", ssh_key)
-
-        # Test connection
-        if host and prompt_yes_no("  Test SSH connection?", True):
-            print_info("  Testing connection...")
-            import subprocess
-
-            ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
-            if ssh_key:
-                ssh_cmd.extend(["-i", ssh_key])
-            if port and port != "22":
-                ssh_cmd.extend(["-p", port])
-            ssh_cmd.append(f"{user}@{host}" if user else host)
-            ssh_cmd.append("echo ok")
-            result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                print_success("  SSH connection successful!")
-            else:
-                print_warning(f"  SSH connection failed: {result.stderr.strip()}")
-                print_info("  Check your SSH key and host settings.")
-
-    # Sync terminal backend to .env so terminal_tool picks it up directly.
-    # config.yaml is the source of truth, but terminal_tool reads TERMINAL_ENV.
-    save_env_value("TERMINAL_ENV", selected_backend)
-    if selected_backend == "modal":
-        save_env_value("TERMINAL_MODAL_MODE", config["terminal"].get("modal_mode", "auto"))
+    config.setdefault("terminal", {})["backend"] = "local"
+    config["terminal"].setdefault("cwd", str(Path.home()))
+    save_env_value("TERMINAL_ENV", "local")
     save_config(config)
-    print()
-    print_success(f"Terminal backend set to: {selected_backend}")
+    print_success("Terminal backend: Local")
 
 
 # =============================================================================
@@ -3000,7 +2724,7 @@ def run_setup_wizard(args):
         print_info("Press Enter to keep it, or type a new value to change it.")
         print_info("")
         print_info("Tip: jump straight to a section with 'hermes setup model|terminal|")
-        print_info("     gateway|tools|agent', or fill only missing items with --quick.")
+        print_info("     tools|agent', or fill only missing items with --quick.")
         # Fall through to the "Full Setup — run all sections" block below.
         # --reconfigure is now the default on existing installs; the flag
         # is preserved for backwards compatibility but is a no-op here.
